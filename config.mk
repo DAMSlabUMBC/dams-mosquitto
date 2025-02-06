@@ -72,7 +72,7 @@ WITH_SYS_TREE:=yes
 # initialization. See README in service/systemd/ for more information.
 # Setting to yes means the libsystemd-dev or similar package will need to be
 # installed.
-WITH_SYSTEMD:=no
+WITH_SYSTEMD:=yes
 
 # Build with SRV lookup support.
 WITH_SRV:=no
@@ -87,7 +87,7 @@ WITH_WEBSOCKETS:=yes
 WITH_EC:=yes
 
 # Build man page documentation by default.
-WITH_DOCS:=yes
+WITH_DOCS:=no
 
 # Build with client support for SOCK5 proxy.
 WITH_SOCKS:=yes
@@ -147,7 +147,7 @@ WITH_SQLITE=yes
 WITH_FUZZING=no
 
 # Build with argon2id support for password hashing.
-WITH_ARGON2=yes
+WITH_ARGON2=no
 
 # Build using clang and with address sanitiser enabled
 WITH_ASAN=no
