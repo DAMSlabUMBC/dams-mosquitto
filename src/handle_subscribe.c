@@ -24,6 +24,7 @@ Contributors:
 #include "mosquitto_broker_internal.h"
 #include "mosquitto/mqtt_protocol.h"
 #include "packet_mosq.h"
+#include "property_common.h"
 #include "property_mosq.h"
 
 
@@ -44,6 +45,9 @@ int handle__subscribe(struct mosquitto *context)
 	bool allowed;
 	struct mosquitto_subscription sub;
 	uint32_t subscription_identifier = 0;
+	/* Purpose filtering (MQTT v5 only) */
+	size_t purpose_filter_count = 0;
+	char* purpose_filters[MOSQ_PF_MAX_FILTERS_PER_SUB];
 
 	if(!context) return MOSQ_ERR_INVAL;
 
@@ -84,6 +88,51 @@ int handle__subscribe(struct mosquitto *context)
 			if(subscription_identifier == 0){
 				mosquitto_property_free_all(&properties);
 				return MOSQ_ERR_MALFORMED_PACKET;
+			}
+		}
+
+		/* Check for purpose filtering which requires registration at subscribe-time by the subscriber */
+		if(db.config->purpose_filtering 
+			&& (db.config->purpose_filter_method == MOSQ_PF_PER_MSG || db.config->purpose_filter_method == MOSQ_PF_MSG_REG))
+		{
+			// Since there can be multiple user properties, loop through entire list
+			const mosquitto_property* curr_prop_ptr = properties;
+			while(curr_prop_ptr)
+			{
+				/* Parse current property */
+				char* name;
+				char* value;
+
+				/* This automatically increments the curr_prop_ptr to the next user property */
+				curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false);
+				if(curr_prop_ptr)
+				{
+					/* Check if this is a purpose filtering property and assign if so */
+					if(!strcmp(name, MOSQ_PF_SP_KEY))
+					{
+						if(purpose_filter_count == MOSQ_PF_MAX_FILTERS_PER_SUB)
+						{
+							log__printf(NULL, MOSQ_LOG_INFO,
+								"Too many purpose filters from %s, disconnecting.",
+								context->address);
+								mosquitto_property_free_all(&properties);
+								return MOSQ_ERR_MALFORMED_PACKET;
+						}
+
+						/* Allocate memory for the filter and copy string */
+						char* filter = mosquitto_malloc(strlen(value));
+						if(!filter)
+						{
+							mosquitto_property_free_all(&properties);
+							return MOSQ_ERR_NOMEM;
+						}
+						memcpy(filter, value, curr_prop_ptr->value.s.len);
+						purpose_filters[purpose_filter_count] = filter;
+						purpose_filter_count++;
+					}
+
+					curr_prop_ptr = curr_prop_ptr->next;
+				}
 			}
 		}
 
@@ -179,6 +228,28 @@ int handle__subscribe(struct mosquitto *context)
 				mosquitto_FREE(sub.topic_filter);
 				sub.topic_filter = sub_mount;
 
+			}
+
+			/* Setup purpose filters */
+			if(purpose_filter_count > 0)
+			{
+				sub.purpose_filter_count = purpose_filter_count;
+				sub.purpose_filters = mosquitto_calloc(purpose_filter_count, sizeof(char*));
+				if(!sub.purpose_filters){
+					mosquitto_FREE(sub.topic_filter);
+					mosquitto_FREE(payload);
+					return MOSQ_ERR_NOMEM;
+				}
+
+				for(size_t i = 0; i < purpose_filter_count; i++)
+				{
+					sub.purpose_filters[i] = purpose_filters[i];
+				}
+			}
+			else
+			{
+				sub.purpose_filter_count = 0;
+				sub.purpose_filters = NULL;
 			}
 
 			allowed = true;

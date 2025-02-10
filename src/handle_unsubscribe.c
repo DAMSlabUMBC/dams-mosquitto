@@ -142,6 +142,7 @@ int handle__unsubscribe(struct mosquitto *context)
 		}
 		log__printf(NULL, MOSQ_LOG_UNSUBSCRIBE, "%s %s", context->id, sub.topic_filter);
 		mosquitto_FREE(sub.topic_filter);
+		mosquitto_FREE(sub.purpose_filters);
 		if(rc){
 			mosquitto_FREE(reason_codes);
 			return rc;

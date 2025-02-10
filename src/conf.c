@@ -319,6 +319,8 @@ static void config__init_reload(struct mosquitto__config *config)
 	config->sys_interval = 10;
 	config->upgrade_outgoing_qos = false;
 	config->packet_buffer_size = 4096;
+	config->purpose_filtering = false;
+	config->purpose_filter_method = MOSQ_PF_NONE;
 }
 
 
@@ -2491,6 +2493,14 @@ static int config__read_file_core(struct mosquitto__config *config, bool reload,
 #else
 					log__printf(NULL, MOSQ_LOG_WARNING, "Warning: Websockets support not available.");
 #endif
+				}else if(!strcmp(token, "purpose_filtering_method")){
+					if(conf__parse_int(&token, token, &tmp_int, &saveptr)) return MOSQ_ERR_INVAL;
+					if(tmp_int < MOSQ_PF_NONE || tmp_int > MOSQ_PF_TOPIC_REG){
+						log__printf(NULL, MOSQ_LOG_WARNING, "Error: Invalid method provided for purpose filtering.");
+						return MOSQ_ERR_INVAL;
+					}
+					config->purpose_filtering = true;
+					config->purpose_filter_method = tmp_int;
 				}else{
 					log__printf(NULL, MOSQ_LOG_ERR, "Error: Unknown configuration variable '%s'.", token);
 					return MOSQ_ERR_INVAL;

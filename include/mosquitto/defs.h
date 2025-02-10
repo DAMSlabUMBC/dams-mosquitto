@@ -111,6 +111,17 @@ enum mosq_transport_t {
 /* MQTT specification restricts client ids to a maximum of 23 characters */
 #define MOSQ_MQTT_ID_MAX_LENGTH 23
 
+/* Purpose filtering */
+#define MOSQ_PF_NONE 0
+#define MOSQ_PF_PER_MSG 1
+#define MOSQ_PF_MSG_REG 2
+#define MOSQ_PF_TOPIC_REG 3
+
+#define MOSQ_PF_SP_KEY "PF-SP"
+#define MOSQ_PF_MP_KEY "PF-MP"
+
+#define MOSQ_PF_MAX_FILTERS_PER_SUB 10
+
 #define MQTT_PROTOCOL_V31 3
 #define MQTT_PROTOCOL_V311 4
 #define MQTT_PROTOCOL_V5 5
