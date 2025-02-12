@@ -265,6 +265,7 @@ void db__msg_store_free(struct mosquitto__base_msg *base_msg)
 		mosquitto_FREE(base_msg->dest_ids);
 	}
 	mosquitto_FREE(base_msg->data.topic);
+	mosquitto_FREE(base_msg->data.purpose_filter);
 	mosquitto_property_free_all(&base_msg->data.properties);
 	mosquitto_FREE(base_msg->data.payload);
 	mosquitto_FREE(base_msg);

@@ -93,6 +93,8 @@ struct mosquitto_base_msg {
 	uint64_t store_id;
 	int64_t expiry_time;
 	char *topic;
+	bool has_purpose_filter;
+	char *purpose_filter;
 	void *payload;
 	char *source_id;
 	char *source_username;

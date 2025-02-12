@@ -409,6 +409,8 @@ struct mosquitto__base_msg{
 	UT_hash_handle hh;
 	struct mosquitto_base_msg data;
 	struct mosquitto__listener *source_listener;
+	bool has_purpose_filter;
+	char* purpose_filter;
 	char **dest_ids;
 	int dest_id_count;
 	int ref_count;

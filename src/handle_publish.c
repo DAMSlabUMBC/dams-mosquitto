@@ -25,6 +25,7 @@ Contributors:
 #include "alias_mosq.h"
 #include "mosquitto/mqtt_protocol.h"
 #include "packet_mosq.h"
+#include "property_common.h"
 #include "property_mosq.h"
 #include "read_handle.h"
 #include "send_mosq.h"
@@ -49,6 +50,9 @@ int handle__publish(struct mosquitto *context)
 	int topic_alias = -1;
 	uint8_t reason_code = 0;
 	uint16_t mid = 0;
+
+	bool found_purpose_filter = false;
+	char* purpose_filter;
 
 	if(context->state != mosq_cs_active){
 		return MOSQ_ERR_PROTOCOL;
@@ -120,6 +124,59 @@ int handle__publish(struct mosquitto *context)
 			return rc;
 		}
 
+		/* Check for purpose filtering with a per-message filter*/
+		if(db.config->purpose_filtering && db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
+		{
+			// Since there can be multiple user properties, loop through entire list
+			const mosquitto_property* curr_prop_ptr = properties;
+			while(curr_prop_ptr)
+			{
+				/* Parse current property */
+				char* name;
+				char* value;
+
+				log__printf(NULL, MOSQ_LOG_INFO,
+					"Ptr %d.",
+					curr_prop_ptr);
+
+				/* This automatically increments the curr_prop_ptr to the next user property */
+				curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false);
+				if(curr_prop_ptr)
+				{
+					/* Check if this is a purpose filtering property and assign if so */
+					if(!strcmp(name, MOSQ_PF_MP_KEY))
+					{
+						/* Msg cannot have multiple purpose filters */
+						if(found_purpose_filter)
+						{
+							log__printf(NULL, MOSQ_LOG_INFO,
+								"More than one purpose filter provided in message from %s, rejecting.",
+								context->id);
+								mosquitto_property_free_all(&properties);
+								return MOSQ_ERR_MALFORMED_PACKET;
+						}
+
+						/* Allocate memory for the filter and copy string */
+						char* filter = mosquitto_malloc(strlen(value));
+						if(!filter)
+						{
+							mosquitto_property_free_all(&properties);
+							return MOSQ_ERR_NOMEM;
+						}
+						memcpy(filter, value, curr_prop_ptr->value.s.len);
+						log__printf(NULL, MOSQ_LOG_INFO,
+								"Incoming message has filter %s.",
+								value);
+
+						purpose_filter = filter;
+						found_purpose_filter = true;
+					}
+
+					curr_prop_ptr = curr_prop_ptr->next;
+				}
+			}
+		}
+
 		rc = property__process_publish(base_msg, &properties, &topic_alias, &message_expiry_interval);
 		if(rc){
 			mosquitto_property_free_all(&properties);
@@ -160,6 +217,25 @@ int handle__publish(struct mosquitto *context)
 		/* Invalid publish topic, just swallow it. */
 		db__msg_store_free(base_msg);
 		return MOSQ_ERR_MALFORMED_PACKET;
+	}
+
+	/* Purpose filter must exist if filtering type is MOSQ_PF_PER_MSG */
+	if(found_purpose_filter)
+	{
+		base_msg->data.purpose_filter = purpose_filter;
+		base_msg->data.has_purpose_filter = true;
+	}
+	else if (db.config->purpose_filtering && db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
+	{
+		log__printf(NULL, MOSQ_LOG_INFO,
+			"Purpose filter not specified by publication from %s, rejecting.",
+			context->id);
+			db__msg_store_free(base_msg);
+			return MOSQ_ERR_MALFORMED_PACKET;
+	}
+	else
+	{
+		base_msg->data.has_purpose_filter = false;
 	}
 
 	base_msg->data.payloadlen = context->in_packet.remaining_length - context->in_packet.pos;
