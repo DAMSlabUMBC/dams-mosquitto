@@ -137,6 +137,49 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 			leaf = leaf->next;
 			continue;
 		}
+
+		/* Purpose filtering */
+		bool allow_all_purposes = (!stored->data.has_purpose_filter || (strcmp(stored->data.purpose_filter, "*") == 0));
+
+		if(!allow_all_purposes)
+		{
+			/* Reject if the subscription has no purpose filter */
+			if(leaf->purpose_filter_count <= 0)
+			{
+				leaf = leaf->next;
+				continue;
+			}
+
+			/* Reject if this is a wildcard sub */
+			if(strstr(leaf->topic_filter, "+") != NULL || strstr(leaf->topic_filter, "#") != NULL)
+			{
+				leaf = leaf->next;
+				continue;
+			}
+
+			/* Match the message filter with the subscription */
+			bool filter_found = false;
+			for(uint8_t i = 0; i < leaf->purpose_filter_count; i++)
+			{
+				// TODO: Match with full filtering
+				if(strcmp(leaf->purpose_filters[i], stored->data.purpose_filter) == 0)
+				{
+					log__printf(NULL, MOSQ_LOG_DEBUG,
+						"Matched subscription filter %s, with message filter %s.",
+						leaf->purpose_filters[i], stored->data.purpose_filter);
+
+					filter_found = true;
+					break;
+				}
+			}
+
+			if(!filter_found)
+			{
+				leaf = leaf->next;
+				continue;
+			}
+		}
+
 		rc2 = subs__send(leaf, topic, qos, retain, stored);
 		if(rc2){
 			rc = 1;
@@ -175,6 +218,8 @@ static int sub__add_leaf(struct mosquitto *context, const struct mosquitto_subsc
 	leaf->identifier = sub->identifier;
 	leaf->subscription_options = sub->options;
 	strcpy(leaf->topic_filter, sub->topic_filter);
+	leaf->purpose_filter_count = sub->purpose_filter_count;
+	leaf->purpose_filters = sub->purpose_filters;
 
 	DL_APPEND(*head, leaf);
 	*newleaf = leaf;

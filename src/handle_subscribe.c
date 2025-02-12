@@ -46,7 +46,7 @@ int handle__subscribe(struct mosquitto *context)
 	struct mosquitto_subscription sub;
 	uint32_t subscription_identifier = 0;
 	/* Purpose filtering (MQTT v5 only) */
-	size_t purpose_filter_count = 0;
+	uint32_t purpose_filter_count = 0;
 	char* purpose_filters[MOSQ_PF_MAX_FILTERS_PER_SUB];
 
 	if(!context) return MOSQ_ERR_INVAL;
@@ -126,7 +126,7 @@ int handle__subscribe(struct mosquitto *context)
 							mosquitto_property_free_all(&properties);
 							return MOSQ_ERR_NOMEM;
 						}
-						memcpy(filter, value, curr_prop_ptr->value.s.len);
+						strcpy(filter, value);
 						purpose_filters[purpose_filter_count] = filter;
 						purpose_filter_count++;
 					}

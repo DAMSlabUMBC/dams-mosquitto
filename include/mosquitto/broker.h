@@ -80,7 +80,7 @@ struct mosquitto_client {
 struct mosquitto_subscription {
 	char *clientid;
 	char *topic_filter;
-	size_t purpose_filter_count;
+	uint32_t purpose_filter_count;
 	char **purpose_filters;
 	mosquitto_property *properties;
 	uint32_t identifier;

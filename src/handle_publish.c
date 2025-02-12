@@ -135,10 +135,6 @@ int handle__publish(struct mosquitto *context)
 				char* name;
 				char* value;
 
-				log__printf(NULL, MOSQ_LOG_INFO,
-					"Ptr %d.",
-					curr_prop_ptr);
-
 				/* This automatically increments the curr_prop_ptr to the next user property */
 				curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false);
 				if(curr_prop_ptr)
@@ -163,7 +159,7 @@ int handle__publish(struct mosquitto *context)
 							mosquitto_property_free_all(&properties);
 							return MOSQ_ERR_NOMEM;
 						}
-						memcpy(filter, value, curr_prop_ptr->value.s.len);
+						strcpy(filter, value);
 						log__printf(NULL, MOSQ_LOG_INFO,
 								"Incoming message has filter %s.",
 								value);
