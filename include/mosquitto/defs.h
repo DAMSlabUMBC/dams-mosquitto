@@ -121,7 +121,7 @@ enum mosq_transport_t {
 #define MOSQ_PF_MP_KEY "PF-MP"
 #define MOSQ_PF_ALLOW_ALL_FILTER "*"
 
-#define MOSQ_PF_MAX_FILTERS_PER_SUB 10
+#define MOSQ_PF_MAX_FILTERS_PER_SUB 100
 
 #define MQTT_PROTOCOL_V31 3
 #define MQTT_PROTOCOL_V311 4

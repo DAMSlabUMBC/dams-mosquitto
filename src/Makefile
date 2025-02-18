@@ -128,6 +128,7 @@ OBJS_EXTERNAL= \
 		packet_datatypes.o \
 		packet_mosq.o \
 		property_mosq.o \
+		purpose_filters.o \
 		send_connect.o \
 		send_disconnect.o \
 		send_mosq.o \
@@ -194,6 +195,9 @@ ${R}/deps/picohttpparser/picohttpparser.o : ${R}/deps/picohttpparser/picohttppar
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
 property_mosq.o : ${R}/lib/property_mosq.c ${R}/lib/property_mosq.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+purpose_filters.o : ${R}/lib/purpose_filters.c ${R}/lib/purpose_filters.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
 send_connect.o : ${R}/lib/send_connect.c ${R}/lib/send_mosq.h

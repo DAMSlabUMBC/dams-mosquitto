@@ -52,6 +52,7 @@ add_executable(mosquitto
 	proxy_v2.c
 	../lib/property_mosq.c ../lib/property_mosq.h
 	psk_file.c
+	../lib/purpose_filters.c ../lib/purpose_filters.h
 	read_handle.c
 	../lib/read_handle.h
 	retain.c

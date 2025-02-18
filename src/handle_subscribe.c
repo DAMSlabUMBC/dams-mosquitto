@@ -26,8 +26,7 @@ Contributors:
 #include "packet_mosq.h"
 #include "property_common.h"
 #include "property_mosq.h"
-
-
+#include "purpose_filters.h"
 
 int handle__subscribe(struct mosquitto *context)
 {
@@ -110,25 +109,68 @@ int handle__subscribe(struct mosquitto *context)
 					/* Check if this is a purpose filtering property and assign if so */
 					if(!strcmp(name, MOSQ_PF_SP_KEY))
 					{
-						if(purpose_filter_count == MOSQ_PF_MAX_FILTERS_PER_SUB)
+						/* Parse all purposes this filter describes */
+						uint32_t num_results = 0;
+						char** purposes = parse_purpose_filter(value, &num_results);
+
+						for(uint32_t i = 0; i < num_results; i++)
 						{
-							log__printf(NULL, MOSQ_LOG_INFO,
-								"Too many purpose filters from %s, disconnecting.",
-								context->address);
+							/* Verify this isn't a dupe */
+							bool found_dupe = false;
+							for(uint32_t j = 0; j < purpose_filter_count; j++)
+							{
+								if(strcmp(purpose_filters[j], purposes[i]) == 0)
+								{
+									found_dupe = true;
+									break;
+								}
+							}
+
+							/* Skip if it is */
+							if(found_dupe)
+							{
+								continue;
+							}
+
+							/* Verify we haven't exceeded the maximum */
+							if(purpose_filter_count == MOSQ_PF_MAX_FILTERS_PER_SUB)
+							{
+								log__printf(NULL, MOSQ_LOG_INFO,
+									"Too many purpose filters from %s, disconnecting.",
+									context->address);
+
+									/* Free purpose struct and purposes */
+									for(uint32_t j = 0; j < num_results; j++)
+									{
+										mosquitto_FREE(purposes[j]);
+									}
+									mosquitto_FREE(purposes);
+
+									mosquitto_property_free_all(&properties);
+									return MOSQ_ERR_MALFORMED_PACKET;
+							}
+
+							/* Allocate memory for the filter and copy string */
+							char* filter = mosquitto_malloc(strlen(purposes[i]));
+							if(!filter)
+							{
+								/* Free purpose struct and purposes */
+								for(uint32_t j = 0; j < num_results; j++)
+								{
+									mosquitto_FREE(purposes[j]);
+								}
+								mosquitto_FREE(purposes);
+
 								mosquitto_property_free_all(&properties);
-								return MOSQ_ERR_MALFORMED_PACKET;
+								return MOSQ_ERR_NOMEM;
+							}
+							strcpy(filter, purposes[i]);
+							purpose_filters[purpose_filter_count] = filter;
+							purpose_filter_count++;
 						}
 
-						/* Allocate memory for the filter and copy string */
-						char* filter = mosquitto_malloc(strlen(value));
-						if(!filter)
-						{
-							mosquitto_property_free_all(&properties);
-							return MOSQ_ERR_NOMEM;
-						}
-						strcpy(filter, value);
-						purpose_filters[purpose_filter_count] = filter;
-						purpose_filter_count++;
+						/* Free purpose struct. Purposes themselves are free'd later*/
+						mosquitto_FREE(purposes);
 					}
 
 					curr_prop_ptr = curr_prop_ptr->next;

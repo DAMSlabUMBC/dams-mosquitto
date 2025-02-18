@@ -160,9 +160,6 @@ int handle__publish(struct mosquitto *context)
 							return MOSQ_ERR_NOMEM;
 						}
 						strcpy(filter, value);
-						log__printf(NULL, MOSQ_LOG_INFO,
-								"Incoming message has filter %s.",
-								value);
 
 						purpose_filter = filter;
 						found_purpose_filter = true;

@@ -161,7 +161,6 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 			bool filter_found = false;
 			for(uint8_t i = 0; i < leaf->purpose_filter_count; i++)
 			{
-				// TODO: Match with full filtering
 				if(strcmp(leaf->purpose_filters[i], stored->data.purpose_filter) == 0)
 				{
 					log__printf(NULL, MOSQ_LOG_DEBUG,
@@ -757,7 +756,6 @@ static struct mosquitto__subhier *tmp_remove_subs(struct mosquitto__subhier *sub
 		return NULL;
 	}
 }
-
 
 /* Remove all subscriptions for a client.
  */
