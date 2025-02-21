@@ -36,6 +36,7 @@ set(C_SRC
 	packet_mosq.c packet_mosq.h
 	property_mosq.c property_mosq.h
 	purpose_filters.c purpose_filters.h
+	mp_registry.c mp_registry.h
 	read_handle.c read_handle.h
 	send_connect.c
 	send_disconnect.c

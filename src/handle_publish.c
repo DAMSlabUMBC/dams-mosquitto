@@ -25,6 +25,7 @@ Contributors:
 #include "alias_mosq.h"
 #include "mosquitto/mqtt_protocol.h"
 #include "packet_mosq.h"
+#include "mp_registry.h" 
 #include "property_common.h"
 #include "property_mosq.h"
 #include "read_handle.h"
@@ -124,48 +125,137 @@ int handle__publish(struct mosquitto *context)
 			return rc;
 		}
 
-		/* Check for purpose filtering with a per-message filter*/
-		if(db.config->purpose_filtering && db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
+		/* Check if purpose filtering is enabled */
+		if(db.config->purpose_filtering)
 		{
-			// Since there can be multiple user properties, loop through entire list
-			const mosquitto_property* curr_prop_ptr = properties;
-			while(curr_prop_ptr)
+			/* (1) Per-Message Declaration */
+			if(db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
 			{
-				/* Parse current property */
-				char* name;
-				char* value;
-
-				/* This automatically increments the curr_prop_ptr to the next user property */
-				curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false);
-				if(curr_prop_ptr)
+				/* Since there can be multiple user properties, loop through them */
+				const mosquitto_property *curr_prop_ptr = properties;
+				while(curr_prop_ptr)
 				{
-					/* Check if this is a purpose filtering property and assign if so */
-					if(!strcmp(name, MOSQ_PF_MP_KEY))
+					/* Parse the current property name/value */
+					char *name, *value;
+					curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false );
+					if(curr_prop_ptr)
 					{
-						/* Msg cannot have multiple purpose filters */
-						if(found_purpose_filter)
+						/* Check if this is a PF-MP property */
+						if(!strcmp(name, MOSQ_PF_MP_KEY))
 						{
-							log__printf(NULL, MOSQ_LOG_INFO,
-								"More than one purpose filter provided in message from %s, rejecting.",
-								context->id);
+							/* Message cannot have multiple purpose filters */
+							if(found_purpose_filter)
+							{
+								log__printf(NULL, MOSQ_LOG_INFO,
+									"More than one purpose filter from %s, rejecting.",
+									context->id);
 								mosquitto_property_free_all(&properties);
 								return MOSQ_ERR_MALFORMED_PACKET;
+							}
+	
+							/* Allocate memory for the filter */
+							char *filter = mosquitto_malloc(strlen(value) + 1);
+							if(!filter)
+							{
+								mosquitto_property_free_all(&properties);
+								return MOSQ_ERR_NOMEM;
+							}
+							strcpy(filter, value);
+							purpose_filter = filter;
+							found_purpose_filter = true;
 						}
-
-						/* Allocate memory for the filter and copy string */
-						char* filter = mosquitto_malloc(strlen(value));
-						if(!filter)
-						{
-							mosquitto_property_free_all(&properties);
-							return MOSQ_ERR_NOMEM;
-						}
-						strcpy(filter, value);
-
-						purpose_filter = filter;
-						found_purpose_filter = true;
+						/* Move to the next property */
+						curr_prop_ptr = curr_prop_ptr->next;
 					}
-
-					curr_prop_ptr = curr_prop_ptr->next;
+				}
+			}
+			/* (2) Registration by Message */
+			else if(db.config->purpose_filter_method == MOSQ_PF_MSG_REG)
+			{
+				/* Check if this is a registration message on $PF/purpose_management */
+				if(!strcmp(topic, "$PF/purpose_management"))
+				{
+					char *t = NULL, *mp = NULL;
+	
+					/* Loop over user properties to find PF-Topic and PF-MP */
+					for(mosquitto_property *p = properties; p; p = p->next)
+					{
+						if(p->identifier == MQTT_PROP_USER_PROPERTY)
+						{
+							if(!strcmp(p->name, "PF-Topic")) t = p->value;
+							else if(!strcmp(p->name, "PF-MP")) mp = p->value;
+						}
+					}
+					/* Must have both PF-Topic and PF-MP */
+					if(!t || !mp) return MOSQ_ERR_PROTOCOL;
+	
+					/* Register the topic to purpose filter mapping */
+					mp__register_topic(t, mp);
+	
+					/* Do not forward this registration message */
+					return MOSQ_ERR_SUCCESS;
+				}
+				else
+				{
+					/* Normal data publish: lookup stored purpose filter */
+					char *stored = mp__lookup_topic(topic);
+					if(stored)
+					{
+						base_msg->data.purpose_filter = mosquitto_strdup(stored);
+						base_msg->data.has_purpose_filter = true;
+					}
+					else
+					{
+						base_msg->data.purpose_filter = mosquitto_strdup("*");
+						base_msg->data.has_purpose_filter = false;
+					}
+				}
+			}
+			/* (3) Registration by Topic */
+			else if(db.config->purpose_filter_method == MOSQ_PF_TOPIC_REG)
+			{
+				const char *pref = "$PF/MP_reg/";
+				/* Check if this is a registration topic starting with $PF/MP_reg/ */
+				if(!strncmp(topic, pref, strlen(pref)))
+				{
+					/* Parse out real_topic and mp_value from the bracketed suffix */
+					const char *rest = topic + strlen(pref);
+					char rt[256] = {0}, mp[256] = {0};
+	
+					const char *b = strchr(rest, '[');
+					if(!b) return MOSQ_ERR_PROTOCOL;
+	
+					size_t rlen = b - rest;
+					if(rlen > 255) rlen = 255;
+					memcpy(rt, rest, rlen);
+					rt[rlen] = '\0';
+	
+					const char *eb = strrchr(b, ']');
+					if(!eb) return MOSQ_ERR_PROTOCOL;
+					size_t mlen = eb - (b + 1);
+					if(mlen > 255) mlen = 255;
+					memcpy(mp, b + 1, mlen);
+					mp[mlen] = '\0';
+	
+					mp__register_topic(rt, mp);
+	
+					/* Do not forward registration */
+					return MOSQ_ERR_SUCCESS;
+				}
+				else
+				{
+					/* Normal data publish */
+					char *stored = mp__lookup_topic(topic);
+					if(stored)
+					{
+						base_msg->data.purpose_filter = mosquitto_strdup(stored);
+						base_msg->data.has_purpose_filter = true;
+					}
+					else
+					{
+						base_msg->data.purpose_filter = mosquitto_strdup("*");
+						base_msg->data.has_purpose_filter = false;
+					}
 				}
 			}
 		}

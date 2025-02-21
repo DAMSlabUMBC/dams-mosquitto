@@ -70,6 +70,7 @@ OBJS= \
 	packet_mosq.o \
 	property_mosq.o \
 	purpose_filters.o \
+	mp_registry.o\
 	read_handle.o \
 	send_connect.o \
 	send_disconnect.o \

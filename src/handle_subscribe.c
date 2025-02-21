@@ -25,6 +25,7 @@ Contributors:
 #include "mosquitto/mqtt_protocol.h"
 #include "packet_mosq.h"
 #include "property_common.h"
+#include "mp_registry.h" 
 #include "property_mosq.h"
 #include "purpose_filters.h"
 

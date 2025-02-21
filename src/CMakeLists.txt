@@ -53,6 +53,7 @@ add_executable(mosquitto
 	../lib/property_mosq.c ../lib/property_mosq.h
 	psk_file.c
 	../lib/purpose_filters.c ../lib/purpose_filters.h
+	../lib/mp_registry.c ../lib/mp_registry.h
 	read_handle.c
 	../lib/read_handle.h
 	retain.c
