@@ -4,8 +4,8 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include "mosquitto_broker_internal.h"  
-#include "memory_mosq.h"                
+#include "mosquitto_internal.h"  
+#include "util_mosq.h"                
 #include "mp_registry.h"
 
 #define MPREG_HASH_SIZE 256
@@ -24,8 +24,8 @@ static struct mp_entry *g_mp_buckets[MPREG_HASH_SIZE];
 static unsigned int mp__hashstr(const char *str)
 {
     unsigned long hash = 5381; 
-    int c;
-    while((c = *str++)){
+    unsigned long c;
+    while((c = (unsigned char) *str++)){
         hash = ((hash << 5) + hash) ^ c;
     }
     return (unsigned int)(hash % MPREG_HASH_SIZE);

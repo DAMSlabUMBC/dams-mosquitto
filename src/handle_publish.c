@@ -173,32 +173,57 @@ int handle__publish(struct mosquitto *context)
 			else if(db.config->purpose_filter_method == MOSQ_PF_MSG_REG)
 			{
 				/* Check if this is a registration message on $PF/purpose_management */
-				if(!strcmp(topic, "$PF/purpose_management"))
+				if(!strcmp(base_msg->data.topic, "$PF/purpose_management"))
 				{
-					char *t = NULL, *mp = NULL;
-	
-					/* Loop over user properties to find PF-Topic and PF-MP */
-					for(mosquitto_property *p = properties; p; p = p->next)
+					/* Since there can be multiple user properties, loop through them */
+					const mosquitto_property *curr_prop_ptr = properties;
+					while(curr_prop_ptr)
 					{
-						if(p->identifier == MQTT_PROP_USER_PROPERTY)
+						/* Parse the current property name/value */
+						char *name, *value;
+						curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false );
+						if(curr_prop_ptr)
 						{
-							if(!strcmp(p->name, "PF-Topic")) t = p->value;
-							else if(!strcmp(p->name, "PF-MP")) mp = p->value;
+							/* Check if this is a PF-MP property */
+							if(!strcmp(name, MOSQ_PF_MP_KEY))
+							{
+								char *temp, *filter, *topic = NULL;
+
+								/* In Registration by Message, MP is of the form '<MP>:<topic> */
+								temp = strchr(value, ':');
+								uint32_t index = (uint32_t)(temp - value);
+								temp++; /* Skip the ':' */
+								
+								// Allocate memory for topic and purpose
+								filter = mosquitto_malloc(index + 1);
+								topic = mosquitto_malloc(strlen(temp) + 1);
+								if(!filter || !topic)
+								{
+									mosquitto_property_free_all(&properties);
+									return MOSQ_ERR_NOMEM;
+								}
+
+								// Copy
+								filter = strncpy(filter, value, index);
+								filter[index] = '\0';
+								topic = strcpy(topic, temp);
+
+								/* Register the topic to purpose filter mapping */
+								mp__register_topic(topic, filter);
+
+							}
+							/* Move to the next property */
+							curr_prop_ptr = curr_prop_ptr->next;
 						}
 					}
-					/* Must have both PF-Topic and PF-MP */
-					if(!t || !mp) return MOSQ_ERR_PROTOCOL;
-	
-					/* Register the topic to purpose filter mapping */
-					mp__register_topic(t, mp);
-	
+
 					/* Do not forward this registration message */
 					return MOSQ_ERR_SUCCESS;
 				}
 				else
 				{
 					/* Normal data publish: lookup stored purpose filter */
-					char *stored = mp__lookup_topic(topic);
+					char *stored = mp__lookup_topic(base_msg->data.topic);
 					if(stored)
 					{
 						base_msg->data.purpose_filter = mosquitto_strdup(stored);
@@ -206,8 +231,9 @@ int handle__publish(struct mosquitto *context)
 					}
 					else
 					{
-						base_msg->data.purpose_filter = mosquitto_strdup("*");
-						base_msg->data.has_purpose_filter = false;
+						/* Copy "deny all" filter*/
+						base_msg->data.purpose_filter = mosquitto_strdup("");
+						base_msg->data.has_purpose_filter = true;
 					}
 				}
 			}
@@ -216,10 +242,10 @@ int handle__publish(struct mosquitto *context)
 			{
 				const char *pref = "$PF/MP_reg/";
 				/* Check if this is a registration topic starting with $PF/MP_reg/ */
-				if(!strncmp(topic, pref, strlen(pref)))
+				if(!strncmp(base_msg->data.topic, pref, strlen(pref)))
 				{
 					/* Parse out real_topic and mp_value from the bracketed suffix */
-					const char *rest = topic + strlen(pref);
+					const char *rest = base_msg->data.topic + strlen(pref);
 					char rt[256] = {0}, mp[256] = {0};
 	
 					const char *b = strchr(rest, '[');
@@ -245,7 +271,7 @@ int handle__publish(struct mosquitto *context)
 				else
 				{
 					/* Normal data publish */
-					char *stored = mp__lookup_topic(topic);
+					char *stored = mp__lookup_topic(base_msg->data.topic);
 					if(stored)
 					{
 						base_msg->data.purpose_filter = mosquitto_strdup(stored);
@@ -253,8 +279,9 @@ int handle__publish(struct mosquitto *context)
 					}
 					else
 					{
-						base_msg->data.purpose_filter = mosquitto_strdup("*");
-						base_msg->data.has_purpose_filter = false;
+						/* Copy "deny all" filter*/
+						base_msg->data.purpose_filter = mosquitto_strdup("");
+						base_msg->data.has_purpose_filter = true;
 					}
 				}
 			}
@@ -303,20 +330,23 @@ int handle__publish(struct mosquitto *context)
 	}
 
 	/* Purpose filter must exist if filtering type is MOSQ_PF_PER_MSG */
-	if(found_purpose_filter)
+	if(db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
 	{
-		base_msg->data.purpose_filter = purpose_filter;
-		base_msg->data.has_purpose_filter = true;
+		if(found_purpose_filter)
+		{
+			base_msg->data.purpose_filter = purpose_filter;
+			base_msg->data.has_purpose_filter = true;
+		}
+		else if (db.config->purpose_filtering && db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
+		{
+			log__printf(NULL, MOSQ_LOG_INFO,
+				"Purpose filter not specified by publication from %s, rejecting.",
+				context->id);
+				db__msg_store_free(base_msg);
+				return MOSQ_ERR_MALFORMED_PACKET;
+		}
 	}
-	else if (db.config->purpose_filtering && db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
-	{
-		log__printf(NULL, MOSQ_LOG_INFO,
-			"Purpose filter not specified by publication from %s, rejecting.",
-			context->id);
-			db__msg_store_free(base_msg);
-			return MOSQ_ERR_MALFORMED_PACKET;
-	}
-	else
+	else if(db.config->purpose_filter_method == MOSQ_PF_NONE)
 	{
 		base_msg->data.has_purpose_filter = false;
 	}
