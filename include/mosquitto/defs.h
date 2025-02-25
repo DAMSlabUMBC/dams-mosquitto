@@ -119,6 +119,9 @@ enum mosq_transport_t {
 
 #define MOSQ_PF_SP_KEY "PF-SP"
 #define MOSQ_PF_MP_KEY "PF-MP"
+#define MOSQ_PF_PM_TOPIC "$PF/purpose_management"
+#define MOSQ_PF_MP_REG_TOPIC "$PF/MP_reg/"
+#define MOSQ_PF_SP_REG_TOPIC "$PF/SP_reg/"
 #define MOSQ_PF_ALLOW_ALL_FILTER "*"
 
 #define MOSQ_PF_MAX_FILTERS_PER_SUB 100

@@ -173,7 +173,7 @@ int handle__publish(struct mosquitto *context)
 			else if(db.config->purpose_filter_method == MOSQ_PF_MSG_REG)
 			{
 				/* Check if this is a registration message on $PF/purpose_management */
-				if(!strcmp(base_msg->data.topic, "$PF/purpose_management"))
+				if(!strcmp(base_msg->data.topic, MOSQ_PF_PM_TOPIC))
 				{
 					/* Since there can be multiple user properties, loop through them */
 					const mosquitto_property *curr_prop_ptr = properties;
@@ -191,6 +191,13 @@ int handle__publish(struct mosquitto *context)
 
 								/* In Registration by Message, MP is of the form '<MP>:<topic> */
 								temp = strchr(value, ':');
+
+								if (temp == NULL)
+								{
+									mosquitto_property_free_all(&properties);
+									return MOSQ_ERR_MALFORMED_PACKET;
+								}
+
 								uint32_t index = (uint32_t)(temp - value);
 								temp++; /* Skip the ':' */
 								
@@ -218,6 +225,7 @@ int handle__publish(struct mosquitto *context)
 					}
 
 					/* Do not forward this registration message */
+					mosquitto_property_free_all(&properties);
 					return MOSQ_ERR_SUCCESS;
 				}
 				else
@@ -240,12 +248,11 @@ int handle__publish(struct mosquitto *context)
 			/* (3) Registration by Topic */
 			else if(db.config->purpose_filter_method == MOSQ_PF_TOPIC_REG)
 			{
-				const char *pref = "$PF/MP_reg/";
 				/* Check if this is a registration topic starting with $PF/MP_reg/ */
-				if(!strncmp(base_msg->data.topic, pref, strlen(pref)))
+				if(!strncmp(base_msg->data.topic, MOSQ_PF_MP_REG_TOPIC, strlen(MOSQ_PF_MP_REG_TOPIC)))
 				{
 					/* Parse out real_topic and mp_value from the bracketed suffix */
-					const char *rest = base_msg->data.topic + strlen(pref);
+					const char *rest = base_msg->data.topic + strlen(MOSQ_PF_MP_REG_TOPIC);
 					char rt[256] = {0}, mp[256] = {0};
 	
 					const char *b = strchr(rest, '[');
@@ -266,7 +273,12 @@ int handle__publish(struct mosquitto *context)
 					mp__register_topic(rt, mp);
 	
 					/* Do not forward registration */
+					mosquitto_property_free_all(&properties);
 					return MOSQ_ERR_SUCCESS;
+				}
+				else if(!strncmp(base_msg->data.topic, MOSQ_PF_SP_REG_TOPIC, strlen(MOSQ_PF_SP_REG_TOPIC)))
+				{
+
 				}
 				else
 				{
