@@ -204,6 +204,9 @@ purpose_filters.o : ${R}/lib/purpose_filters.c ${R}/lib/purpose_filters.h
 mp_registry.o : ${R}/lib/mp_registry.c ${R}/lib/mp_registry.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
+sp_registry.o : ${R}/lib/sp_registry.c ${R}/lib/sp_registry.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
 send_connect.o : ${R}/lib/send_connect.c ${R}/lib/send_mosq.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
