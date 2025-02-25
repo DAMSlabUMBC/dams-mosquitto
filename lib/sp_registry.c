@@ -3,8 +3,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include "mosquitto_broker_internal.h"
-#include "memory_mosq.h"
+
+#include "mosquitto_internal.h"
+#include "util_mosq.h"
 #include "sp_registry.h"
 
 #define SPREG_HASH_SIZE 256
@@ -23,7 +24,7 @@ static struct sp_entry *g_sp_buckets[SPREG_HASH_SIZE];
 static unsigned int sp__hashstr(const char *str)
 {
     unsigned long hash = 5381;
-    int c;
+    uint32_t c;
     while((c = (unsigned char)(*str++))){
         hash = ((hash << 5) + hash) ^ c;
     }

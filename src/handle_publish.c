@@ -26,6 +26,7 @@ Contributors:
 #include "mosquitto/mqtt_protocol.h"
 #include "packet_mosq.h"
 #include "mp_registry.h" 
+#include "sp_registry.h" 
 #include "property_common.h"
 #include "property_mosq.h"
 #include "read_handle.h"
@@ -217,7 +218,6 @@ int handle__publish(struct mosquitto *context)
 
 								/* Register the topic to purpose filter mapping */
 								mp__register_topic(topic, filter);
-
 							}
 							/* Move to the next property */
 							curr_prop_ptr = curr_prop_ptr->next;
@@ -249,14 +249,18 @@ int handle__publish(struct mosquitto *context)
 			else if(db.config->purpose_filter_method == MOSQ_PF_TOPIC_REG)
 			{
 				/* Check if this is a registration topic starting with $PF/MP_reg/ */
-				if(!strncmp(base_msg->data.topic, MOSQ_PF_MP_REG_TOPIC, strlen(MOSQ_PF_MP_REG_TOPIC)))
+				if(strlen(base_msg->data.topic) >= strlen(MOSQ_PF_MP_REG_TOPIC) && !strncmp(base_msg->data.topic, MOSQ_PF_MP_REG_TOPIC, strlen(MOSQ_PF_MP_REG_TOPIC)))
 				{
 					/* Parse out real_topic and mp_value from the bracketed suffix */
 					const char *rest = base_msg->data.topic + strlen(MOSQ_PF_MP_REG_TOPIC);
 					char rt[256] = {0}, mp[256] = {0};
 	
 					const char *b = strchr(rest, '[');
-					if(!b) return MOSQ_ERR_PROTOCOL;
+					if(!b)
+					{
+						mosquitto_property_free_all(&properties);
+						return MOSQ_ERR_PROTOCOL;
+					}
 	
 					size_t rlen = b - rest;
 					if(rlen > 255) rlen = 255;
@@ -271,14 +275,58 @@ int handle__publish(struct mosquitto *context)
 					mp[mlen] = '\0';
 	
 					mp__register_topic(rt, mp);
-	
+
 					/* Do not forward registration */
 					mosquitto_property_free_all(&properties);
 					return MOSQ_ERR_SUCCESS;
 				}
-				else if(!strncmp(base_msg->data.topic, MOSQ_PF_SP_REG_TOPIC, strlen(MOSQ_PF_SP_REG_TOPIC)))
+				/* Check if the subscription topic begins with "$PF/SP_reg/" */
+				else if(strlen(base_msg->data.topic) >= strlen(MOSQ_PF_SP_REG_TOPIC) && !strncmp(base_msg->data.topic, MOSQ_PF_SP_REG_TOPIC, strlen(MOSQ_PF_SP_REG_TOPIC)))
 				{
+					/*  Parse the special subscription topic of the form */
+					const char *rest = base_msg->data.topic + strlen(MOSQ_PF_SP_REG_TOPIC);
+					
+					/* Buffers for the real topic and the subscriber SP */
+					char rt[256] = {0};
+					char sp_val[256] = {0};
+					const char *b = strchr(rest, '[');
+					if (!b)
+					{
+						log__printf(NULL, MOSQ_LOG_INFO, 
+							"SP registration error: missing '[' in %s", base_msg->data.topic);
+						mosquitto_property_free_all(&properties);
+						return MOSQ_ERR_INVAL;
+					}
+			
+					/* Calculate and copy the real topic */
+					size_t rlen = b - rest;
+					if (rlen > 255)
+						rlen = 255;
+					memcpy(rt, rest, rlen);
+					rt[rlen] = '\0';
+			
+					/* Find the closing bracket that ends the SP value */
+					const char *eb = strrchr(b, ']');
+					if (!eb)
+					{
+						log__printf(NULL, MOSQ_LOG_INFO, 
+							"SP registration error: missing ']' in %s", base_msg->data.topic);
+						return MOSQ_ERR_INVAL;
+					}
+			
+					/* Copy the subscriber SP */
+					size_t splen = eb - (b + 1);
+					if (splen > 255)
+						splen = 255;
+					memcpy(sp_val, b + 1, splen);
+					sp_val[splen] = '\0';
+			
+					/* Register this SP for the real topic in the sp_registry */
+					sp__register_topic(rt, sp_val);
 
+					/* Return success so that this is not forwarded as a normal subscription */
+					mosquitto_property_free_all(&properties);
+					return MOSQ_ERR_SUCCESS;
 				}
 				else
 				{

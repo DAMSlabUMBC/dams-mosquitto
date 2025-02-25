@@ -130,6 +130,7 @@ OBJS_EXTERNAL= \
 		property_mosq.o \
 		purpose_filters.o \
 		mp_registry.o \
+		sp_registry.o \
 		send_connect.o \
 		send_disconnect.o \
 		send_mosq.o \
