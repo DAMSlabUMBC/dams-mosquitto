@@ -60,6 +60,8 @@ add_library(persistence-write-obj
         ../../../src/persist_write.c
         ../../../src/retain.c
         ../../../src/subs.c
+        ../../../lib/sp_registry.c        
+        ../../../lib/purpose_filters.c   
         ../../../src/topic_tok.c
 )
 target_compile_definitions(persistence-write-obj PRIVATE WITH_PERSISTENCE WITH_BROKER)
@@ -86,6 +88,8 @@ add_library(subs-obj
         ../../../lib/packet_datatypes.c
         ../../../src/database.c
         ../../../src/subs.c
+        ../../../lib/sp_registry.c        
+        ../../../lib/purpose_filters.c   
         ../../../src/topic_tok.c
 )
 target_compile_definitions(subs-obj PRIVATE WITH_BROKER)
@@ -95,6 +99,7 @@ target_link_libraries(subs-obj PUBLIC common-unit-test-header)
 add_executable(subs-test
     subs_stubs.c
     subs_test.c
+
 )
 
 target_compile_definitions(subs-test PRIVATE WITH_PERSISTENCE WITH_BROKER WITH_SYS_TREE)

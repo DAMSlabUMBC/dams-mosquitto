@@ -13,6 +13,10 @@ project(mosquitto
 	LANGUAGES C CXX
 )
 
+if(DISABLE_ENGINE_CLEANUP)
+    add_compile_definitions(DISABLE_ENGINE_CLEANUP)
+endif()
+
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
