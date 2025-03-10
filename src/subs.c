@@ -142,13 +142,6 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 		/* Purpose filtering */
 		if(db.config->purpose_filtering)
 		{
-			/* Reject if this is a wildcard sub */
-			if(strstr(leaf->topic_filter, "+") != NULL || strstr(leaf->topic_filter, "#") != NULL)
-			{
-				leaf = leaf->next;
-				continue;
-			}
-
 			bool allow_all_purposes = ((strcmp(stored->data.purpose_filter, "*") == 0));
 
 			/* (1) Per Message Filtering and (2) Message Registration */
