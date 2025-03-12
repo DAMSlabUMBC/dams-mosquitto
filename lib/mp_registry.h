@@ -12,11 +12,11 @@ void mp_registry_init(void);
 void mp_registry_cleanup(void);
 
 /* Registers or overwrites a purpose filter for the given topic */
-void mp__register_topic(const char *topic, const char *mp_value);
+void mp__register_topic(const char* id, const char *topic, const char *mp_value);
 
 /* Looks up the stored purpose filter for a given topic. */
 
-char *mp__lookup_topic(const char *topic);
+char *mp__lookup_topic(const char* id, const char *topic);
 
 #ifdef __cplusplus
 }

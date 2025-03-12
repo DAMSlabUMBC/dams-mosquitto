@@ -217,7 +217,7 @@ int handle__publish(struct mosquitto *context)
 								topic = strcpy(topic, temp);
 
 								/* Register the topic to purpose filter mapping */
-								mp__register_topic(topic, filter);
+								mp__register_topic(context->id, topic, filter);
 							}
 							/* Move to the next property */
 							curr_prop_ptr = curr_prop_ptr->next;
@@ -231,7 +231,7 @@ int handle__publish(struct mosquitto *context)
 				else
 				{
 					/* Normal data publish: lookup stored purpose filter */
-					char *stored = mp__lookup_topic(base_msg->data.topic);
+					char *stored = mp__lookup_topic(context->id, base_msg->data.topic);
 					if(stored)
 					{
 						base_msg->data.purpose_filter = mosquitto_strdup(stored);
@@ -274,7 +274,7 @@ int handle__publish(struct mosquitto *context)
 					memcpy(mp, b + 1, mlen);
 					mp[mlen] = '\0';
 	
-					mp__register_topic(rt, mp);
+					mp__register_topic(context->id, rt, mp);
 
 					/* Do not forward registration */
 					mosquitto_property_free_all(&properties);
@@ -285,6 +285,46 @@ int handle__publish(struct mosquitto *context)
 				{
 					/*  Parse the special subscription topic of the form */
 					const char *rest = base_msg->data.topic + strlen(MOSQ_PF_SP_REG_TOPIC);
+
+					/* SP can contain replacement terms for wildcards */
+					char* curr_string = malloc(strlen(rest) + 1);
+    				strcpy(curr_string, rest);
+
+					int found = 1;
+					while(found)
+					{
+						found = 0;
+						
+						// Check for HASH first
+						char* replace_start = strstr(curr_string, "HASH");
+						if(replace_start != NULL)
+						{
+							size_t start_index = (size_t)(replace_start - curr_string);
+							char* hash_end = replace_start + 4;
+							size_t len_after_hash = strlen(hash_end);
+							
+							curr_string[start_index] = '#'; // Replace next part with literal '#'
+							strncpy(&curr_string[start_index + 1], hash_end, len_after_hash); // Fill in the rest
+							curr_string[start_index + len_after_hash + 1] = '\0';
+							found = 1;
+						}
+						
+						// Now check for PLUS
+						replace_start = strstr(curr_string, "PLUS");
+						if(replace_start != NULL)
+						{
+							size_t start_index = (size_t)(replace_start - curr_string);
+							char* hash_end = replace_start + 4;
+							size_t len_after_hash = strlen(hash_end);
+							
+							curr_string[start_index] = '+'; // Replace next part with literal '#'
+							strncpy(&curr_string[start_index + 1], hash_end, len_after_hash); // Fill in the rest
+							curr_string[start_index + len_after_hash + 1] = '\0';
+							found = 1;
+						}
+					}
+
+					rest = curr_string;
 					
 					/* Buffers for the real topic and the subscriber SP */
 					char rt[256] = {0};
@@ -322,7 +362,7 @@ int handle__publish(struct mosquitto *context)
 					sp_val[splen] = '\0';
 			
 					/* Register this SP for the real topic in the sp_registry */
-					sp__register_topic(rt, sp_val);
+					sp__register_topic(context->id, rt, sp_val);
 
 					/* Return success so that this is not forwarded as a normal subscription */
 					mosquitto_property_free_all(&properties);
@@ -331,7 +371,7 @@ int handle__publish(struct mosquitto *context)
 				else
 				{
 					/* Normal data publish */
-					char *stored = mp__lookup_topic(base_msg->data.topic);
+					char *stored = mp__lookup_topic(context->id, base_msg->data.topic);
 					if(stored)
 					{
 						base_msg->data.purpose_filter = mosquitto_strdup(stored);

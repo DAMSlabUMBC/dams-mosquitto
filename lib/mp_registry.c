@@ -54,9 +54,13 @@ void mp_registry_cleanup(void)
 }
 
 /* Store or overwrite a purpose filter for a given topic */
-void mp__register_topic(const char *topic, const char *mp_value)
+void mp__register_topic(const char* id, const char *topic, const char *mp_value)
 {
-    unsigned int bucket_index = mp__hashstr(topic);
+    char* hash_string = mosquitto_malloc(strlen(id) + strlen(topic) + 1);
+    strcpy(hash_string, id);
+    strcat(hash_string, topic);
+    unsigned int bucket_index = mp__hashstr(hash_string);
+    mosquitto_FREE(hash_string);
 
     /* Search this chain for an existing entry with the same topic */
     struct mp_entry *curr = g_mp_buckets[bucket_index];
@@ -79,9 +83,14 @@ void mp__register_topic(const char *topic, const char *mp_value)
 }
 
 /* Look up the purpose filter for a given topic */
-char *mp__lookup_topic(const char *topic)
+char *mp__lookup_topic(const char* id, const char *topic)
 {
-    unsigned int bucket_index = mp__hashstr(topic);
+    char* hash_string = mosquitto_malloc(strlen(id) + strlen(topic) + 1);
+    strcpy(hash_string, id);
+    strcat(hash_string, topic);
+    unsigned int bucket_index = mp__hashstr(hash_string);
+    mosquitto_FREE(hash_string);
+
     struct mp_entry *curr = g_mp_buckets[bucket_index];
 
     while(curr){

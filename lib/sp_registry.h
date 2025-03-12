@@ -7,8 +7,8 @@ extern "C" {
 
 void sp_registry_init(void);
 void sp_registry_cleanup(void);
-void sp__register_topic(const char *topic, const char *sp_value);
-char *sp__lookup_topic(const char *topic);
+void sp__register_topic(const char* id, const char *topic, const char *sp_value);
+char *sp__lookup_topic(const char* id, const char *topic);
 
 #ifdef __cplusplus
 }

@@ -179,7 +179,7 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 			else if (db.config->purpose_filter_method == MOSQ_PF_TOPIC_REG)
 			{
 				/* There needs to be a registered SP for this topic */
-				char *registered_sp = sp__lookup_topic(leaf->topic_filter);
+				char *registered_sp = sp__lookup_topic(leaf->context->id, leaf->topic_filter);
 				if(!registered_sp)
 				{
 					leaf = leaf->next;

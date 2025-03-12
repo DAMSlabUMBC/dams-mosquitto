@@ -52,9 +52,14 @@ void sp_registry_cleanup(void)
 }
 
 /* Store or overwrite SP for a topic */
-void sp__register_topic(const char *topic, const char *sp_value)
+void sp__register_topic(const char* id, const char *topic, const char *sp_value)
 {
-    unsigned int idx = sp__hashstr(topic);
+    char* hash_string = mosquitto_malloc(strlen(id) + strlen(topic) + 1);
+    strcpy(hash_string, id);
+    strcat(hash_string, topic);
+    unsigned int idx = sp__hashstr(hash_string);
+    mosquitto_FREE(hash_string);
+
     struct sp_entry *curr = g_sp_buckets[idx];
     while(curr){
         if(!strcmp(curr->topic, topic)){
@@ -72,9 +77,14 @@ void sp__register_topic(const char *topic, const char *sp_value)
 }
 
 /* Look up the purpose filter for a given topic */
-char *sp__lookup_topic(const char *topic)
+char *sp__lookup_topic(const char* id, const char *topic)
 {
-    unsigned int idx = sp__hashstr(topic);
+    char* hash_string = mosquitto_malloc(strlen(id) + strlen(topic) + 1);
+    strcpy(hash_string, id);
+    strcat(hash_string, topic);
+    unsigned int idx = sp__hashstr(hash_string);
+    mosquitto_FREE(hash_string);
+
     struct sp_entry *curr = g_sp_buckets[idx];
     while(curr){
         if(!strcmp(curr->topic, topic)){
