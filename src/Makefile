@@ -66,6 +66,7 @@ OBJS=	mosquitto.o \
 		mux_epoll.o \
 		mux_kqueue.o \
 		mux_poll.o \
+		rights_broker.o
 		net.o \
 		property_broker.o \
 		persist_read.o \
@@ -131,6 +132,9 @@ OBJS_EXTERNAL= \
 		purpose_filters.o \
 		mp_registry.o \
 		sp_registry.o \
+		ri_registry.o \
+		dr_registry.o \
+		rights_registry.o \
 		send_connect.o \
 		send_disconnect.o \
 		send_mosq.o \
@@ -206,6 +210,15 @@ mp_registry.o : ${R}/lib/mp_registry.c ${R}/lib/mp_registry.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
 sp_registry.o : ${R}/lib/sp_registry.c ${R}/lib/sp_registry.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+ri_registry.o : ${R}/lib/ri_registry.c ${R}/lib/ri_registry.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+dr_registry.o : ${R}/lib/dr_registry.c ${R}/lib/dr_registry.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+rights_registry.o : ${R}/lib/rights_registry.c ${R}/lib/rights_registry.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
 send_connect.o : ${R}/lib/send_connect.c ${R}/lib/send_mosq.h

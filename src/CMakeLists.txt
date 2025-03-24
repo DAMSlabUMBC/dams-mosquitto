@@ -31,6 +31,7 @@ add_executable(mosquitto
 	mosquitto.c
 	../include/mosquitto_broker.h mosquitto_broker_internal.h
 	mux.c mux.h mux_epoll.c mux_kqueue.c mux_poll.c
+	rights_broker.c rights_broker.h
 	net.c
 	../lib/net_mosq_ocsp.c ../lib/net_mosq.c ../lib/net_mosq.h
 	../lib/net_ws.c
@@ -55,6 +56,9 @@ add_executable(mosquitto
 	../lib/purpose_filters.c ../lib/purpose_filters.h
 	../lib/mp_registry.c ../lib/mp_registry.h
 	../lib/sp_registry.c ../lib/sp_registry.h
+	../lib/ri_registry.c ../lib/ri_registry.h
+	../lib/dr_registry.c ../lib/dr_registry.h
+	../lib/rights_registry.c ../lib/rights_registry.h
 	read_handle.c
 	../lib/read_handle.h
 	retain.c

@@ -60,7 +60,10 @@ add_library(persistence-write-obj
         ../../../src/persist_write.c
         ../../../src/retain.c
         ../../../src/subs.c
-        ../../../lib/sp_registry.c        
+        ../../../lib/sp_registry.c 
+        ../../../lib/ri_registry.c 
+        ../../../lib/dr_registry.c  
+        ../../../lib/rights_registry.c 
         ../../../lib/purpose_filters.c   
         ../../../src/topic_tok.c
 )
@@ -88,7 +91,10 @@ add_library(subs-obj
         ../../../lib/packet_datatypes.c
         ../../../src/database.c
         ../../../src/subs.c
-        ../../../lib/sp_registry.c        
+        ../../../lib/ri_registry.c  
+        ../../../lib/sp_registry.c  
+        ../../../lib/dr_registry.c  
+        ../../../lib/rights_registry.c      
         ../../../lib/purpose_filters.c   
         ../../../src/topic_tok.c
 )

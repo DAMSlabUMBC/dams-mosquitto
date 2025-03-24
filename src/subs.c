@@ -56,8 +56,8 @@ Contributors:
 #include "mosquitto_broker_internal.h"
 #include "mosquitto/mqtt_protocol.h"
 #include "util_mosq.h"
+#include "dr_registry.h" 
 #include "purpose_filters.h"
-
 #include "utlist.h"
 
 static struct mosquitto__subhier *sub__add_hier_entry(struct mosquitto__subhier *parent, struct mosquitto__subhier **sibling, const char *topic, uint16_t len);
@@ -213,6 +213,7 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 		}
 
 		rc2 = subs__send(leaf, topic, qos, retain, stored);
+		dr__record_recipient(stored->data.source_id, topic, leaf->context->id);
 		if(rc2){
 			rc = 1;
 		}

@@ -3,7 +3,7 @@ FROM ubuntu:20.04
 # Disable interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install required packages including missing dependencies
+# Install required packages including the missing dependencies
 RUN apt-get update && apt-get install -y \
     cmake \
     build-essential \
@@ -18,14 +18,14 @@ RUN apt-get update && apt-get install -y \
     docbook-xsl \
  && rm -rf /var/lib/apt/lists/*
 
-# Set working directory to your project root
+# Set working directory to project root
 WORKDIR /opt/mqtt_brokers/dams-mosquitto
 
 # Copy the entire repository into the container
 COPY . /opt/mqtt_brokers/dams-mosquitto
 
 # Build the broker with LTO disabled and ENGINE_cleanup disabled
-RUN cmake -DWITH_LTO=OFF -DWITH_CLIENTS=OFF -DCMAKE_C_FLAGS="-DDISABLE_ENGINE_CLEANUP" . && make
+RUN cmake -DWITH_LTO=OFF -DWITH_CLIENTS=OFF -DWITH_BROKER=ON -DCMAKE_C_FLAGS="-DDISABLE_ENGINE_CLEANUP" . && make
 
 # Copy the built Mosquitto binary and library to system directories, then update the linker cache
 RUN cp src/mosquitto /usr/local/sbin/mosquitto && \

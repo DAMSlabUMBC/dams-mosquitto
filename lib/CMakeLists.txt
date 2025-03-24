@@ -38,6 +38,9 @@ set(C_SRC
 	purpose_filters.c purpose_filters.h
 	mp_registry.c mp_registry.h
 	sp_registry.c sp_registry.h
+	ri_registry.c ri_registry.h
+	dr_registry.c dr_registry.h
+	rights_registry.c rights_registry.h
 	read_handle.c read_handle.h
 	send_connect.c
 	send_disconnect.c

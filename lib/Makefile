@@ -72,6 +72,9 @@ OBJS= \
 	purpose_filters.o \
 	mp_registry.o \
 	sp_registry.o \
+	ri_registry.o \
+	dr_registry.o \
+	rights_registry.o \
 	read_handle.o \
 	send_connect.o \
 	send_disconnect.o \

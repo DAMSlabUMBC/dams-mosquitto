@@ -27,6 +27,10 @@ Contributors:
 #include "property_common.h"
 #include "mp_registry.h" 
 #include "property_mosq.h"
+#include "ri_registry.h" 
+#include "dr_registry.h" 
+#include "rights_registry.h" 
+#include "rights_broker.h" 
 #include "purpose_filters.h"
 
 int handle__subscribe(struct mosquitto *context)
@@ -178,7 +182,41 @@ int handle__subscribe(struct mosquitto *context)
 				}
 			}
 		}
+		
+		/* Check if we're using Rights-based filtering. */
+	 	bool found_rightinfo = false;
+    	const mosquitto_property *p = properties;
 
+   		/* Loop through SUBSCRIBE user properties. */
+   		while(p){
+       		if(p->identifier == MQTT_PROP_USER_PROPERTY){
+           		char *name = NULL, *value = NULL;
+
+           		/* Read the property name and value strings. */
+           		p = mosquitto_property_read_string_pair(p, MQTT_PROP_USER_PROPERTY, &name, &value, false);
+           		if(p && name && value && !strcmp(name, MOSQ_PF_RIGHT_INFO_KEY)){
+               		found_rightinfo = true;
+
+					/* "PF-RightInfo" should be "<topic>:<info>". */
+               		char *colon = strchr(value, ':');
+               		if(!colon){
+                   		mosquitto_property_free_all(&properties);
+                   		return MOSQ_ERR_INVAL;
+               		}
+               		size_t tlen = (size_t)(colon - value);
+               		char *reg_topic = mosquitto_calloc(tlen + 1, sizeof(char));
+               		strncpy(reg_topic, value, tlen);
+               		/* Info part is after the colon. */
+               		char *info_str = mosquitto_strdup(colon + 1);
+        
+               		/* Store in the "right info" registry. */
+               		ri__register_info(context->id, reg_topic, info_str);
+               		mosquitto_FREE(reg_topic);
+            		mosquitto_FREE(info_str);
+            	}
+        	}
+        	if(p) p = p->next; /* Move to the next property. */
+    	}
 		mosquitto_property_free_all(&properties);
 		/* Note - User Property not handled */
 	}

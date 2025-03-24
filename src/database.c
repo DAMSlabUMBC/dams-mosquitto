@@ -208,6 +208,78 @@ int db__open(struct mosquitto__config *config)
 	return MOSQ_ERR_SUCCESS;
 }
 
+struct mosq_id_link {
+    char *clientid;                
+    struct mosquitto *context;     
+    UT_hash_handle hh;          
+};
+
+static struct mosq_id_link *g_id_hash = NULL;
+
+void db__add_context_by_id(struct mosquitto *ctx)
+{
+    struct mosq_id_link *link;
+
+    /* Sanity checks. */
+    if(!ctx || !ctx->id){
+        return;
+    }
+
+    /* See if we already have an entry for this clientid. */
+    HASH_FIND_STR(g_id_hash, ctx->id, link);
+    if(link){
+        /* Already in the hash, possibly update the pointer */
+        link->context = ctx;
+        return;
+    }
+
+    /* Otherwise create a new link. */
+    link = mosquitto_calloc(1, sizeof(*link));
+    if(!link) return; // out of memory
+
+    link->clientid = mosquitto_strdup(ctx->id);
+    if(!link->clientid){
+        mosquitto_free(link);
+        return;
+    }
+    link->context  = ctx;
+
+    HASH_ADD_KEYPTR(hh, g_id_hash, link->clientid, strlen(link->clientid), link);
+}
+
+void db__remove_context_by_id(struct mosquitto *ctx)
+{
+    struct mosq_id_link *link;
+
+    if(!ctx || !ctx->id) return;
+
+    /* Find the link in our hash. */
+    HASH_FIND_STR(g_id_hash, ctx->id, link);
+    if(link){
+        /* Remove it. */
+        HASH_DEL(g_id_hash, link);
+
+        /* Free memory. */
+        mosquitto_free(link->clientid);
+        mosquitto_free(link);
+    }
+}
+
+struct mosquitto *db__find_context_by_id(const char *client_id)
+{
+    struct mosq_id_link *link = NULL;
+
+    if(!client_id) return NULL;
+
+    /* Use our custom hash to find the link. */
+    HASH_FIND_STR(g_id_hash, client_id, link);
+    if(link){
+        return link->context;
+    } else {
+        return NULL;
+    }
+}
+
 static void subhier_clean(struct mosquitto__subhier **subhier)
 {
 	struct mosquitto__subhier *peer, *subhier_tmp;

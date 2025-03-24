@@ -26,6 +26,10 @@ Contributors:
 #include "mosquitto/mqtt_protocol.h"
 #include "packet_mosq.h"
 #include "mp_registry.h" 
+#include "ri_registry.h" 
+#include "dr_registry.h" 
+#include "rights_registry.h" 
+#include "rights_broker.h" 
 #include "sp_registry.h" 
 #include "property_common.h"
 #include "property_mosq.h"
@@ -385,7 +389,203 @@ int handle__publish(struct mosquitto *context)
 					}
 				}
 			}
-		}
+			
+			/* Check if this publish includes a PF-Right user property. */
+    		bool found_pf_right = false;
+    		bool found_pf_datafilter = false;
+    		char *invoked_right = NULL;
+    		char *data_filter = NULL;
+    		char *gdpr_reason = NULL;
+    		char *remove_stored = NULL;
+    		char *correlation_data = NULL; 
+			uint32_t pf_deadline = 0; 
+			
+
+    		/* Look through the user properties for PF-Right */
+			const mosquitto_property *p = properties;
+   			while(p){
+        		if(p->identifier == MQTT_PROP_USER_PROPERTY){
+            		char *name=NULL, *value=NULL;
+            		mosquitto_property_read_string_pair(p, MQTT_PROP_USER_PROPERTY, &name, &value, false);
+
+            		if(name && value){
+						/* If we find PF-Right then note it. */
+                		if(!strcmp(name, MOSQ_PF_RIGHT_KEY)){
+                    		found_pf_right = true;
+                    		invoked_right  = mosquitto_strdup(value);
+                		} else if(!strcmp(name, MOSQ_PF_DATA_FILTER_KEY)){
+                    		data_filter = mosquitto_strdup(value);
+                		} else if(!strcmp(name, MOSQ_PF_REMOVE_STORED_KEY)){
+                    		remove_stored = mosquitto_strdup(value);
+                		} else if(!strcmp(name, MOSQ_PF_GDPR_REASON_KEY)){
+                    		gdpr_reason = mosquitto_strdup(value);
+                		} else if(!strcmp(name, MOSQ_PF_CORRELATION_DATA_KEY)){
+                    		correlation_data = mosquitto_strdup(value);
+                		} else if(!strcmp(name, MOSQ_PF_DEADLINE_KEY)){
+                    		pf_deadline = (uint32_t)atoi(value);
+                		}
+            		}
+        		}
+				/* Move to next property. */
+        		p = p->next;
+    		}
+    	
+    		/* If a PF-Right was found, check the topic to see which of the five 
+     		* MQTT-PF Right Invocation topics it might match.
+     		*/
+    		if(found_pf_right)
+    		{
+        		const char *topic = base_msg->data.topic;
+
+				/* (1) RR: Right Request */
+       			if(!strncmp(topic, MOSQ_PF_TOPIC_RR, 2))
+       			{
+           			/* handle RR */
+           			log__printf(NULL, MOSQ_LOG_INFO, 
+               			"[RR] Found right '%s' from %s, swallowing.",
+               			invoked_right ? invoked_right : "(null)", context->id);
+            			
+					rr_store_request(context->id, correlation_data, invoked_right, data_filter);
+					mosquitto_property_free_all(&properties);
+					db__msg_store_free(base_msg);
+
+					mosquitto_FREE(invoked_right);
+					mosquitto_FREE(data_filter);
+					mosquitto_FREE(remove_stored);
+					mosquitto_FREE(gdpr_reason);
+					mosquitto_FREE(correlation_data);
+					return MOSQ_ERR_SUCCESS;
+        		}
+        		/* (2) RRS: Subscriber-Keyed Right Request */
+        		else if(!strncmp(topic, MOSQ_PF_TOPIC_RRS, 3))
+        		{
+           			/* handle RRS */
+           			log__printf(NULL, MOSQ_LOG_INFO, 
+               			"[RRS] Found right '%s' from %s, swallowing.",
+               			invoked_right ? invoked_right : "(null)", context->id);
+
+					rr_store_request(context->id, correlation_data, invoked_right, data_filter);
+					mosquitto_property_free_all(&properties);
+					db__msg_store_free(base_msg);
+					
+					mosquitto_FREE(invoked_right);
+					mosquitto_FREE(data_filter);
+					mosquitto_FREE(remove_stored);
+					mosquitto_FREE(gdpr_reason);
+					mosquitto_FREE(correlation_data);
+					return MOSQ_ERR_SUCCESS;
+        		}
+        		/* (3) $RSYS: Right System topic */
+        		else if(!strncmp(topic, MOSQ_PF_TOPIC_RSYS, 5))
+        		{
+           			/* handle RSYS */   
+					rr_store_request(context->id, correlation_data, invoked_right, data_filter);
+
+					if(remove_stored){
+						/* Handle "WILL" or "RETAINED:..." for erasure. */
+						handle_remove_stored_messages(context->id, remove_stored);
+					}
+				   
+					/* Check which right is invoked. */
+					if(!strcmp(invoked_right, "be_informed"))
+					{
+						/* C1-2: Broker sends its own info, then retrieves subscriber info. */
+						broker_send_response_status(context->id, correlation_data, "Broker info");
+						subscription_list *subs = find_subscriptions_for_publisher(context->id);
+						while(subs){
+							const char *info = ri__lookup_info(subs->subscriber_id, subs->topic);
+							if(info){
+								broker_send_response_data(context->id, correlation_data, info);
+							}
+							subs = subs->next;
+						}
+					}
+					else if(!strcmp(invoked_right, "access") || !strcmp(invoked_right, "data_portability"))
+					{
+						/* C2-2: Provide broker info, forward requests only to subs that have data. */
+						broker_send_response_status(context->id, correlation_data, "Broker data snippet");
+						subscriber_list *sub_list = find_subscribers_with_data(context->id, data_filter);
+						subscriber_list *offline = forward_request_to_connected(sub_list, correlation_data, invoked_right, data_filter);
+						if(offline){
+							broker_send_response_pending(context->id, correlation_data, offline, 60);
+						}
+					}
+					else if(!strcmp(invoked_right, "rectification") || !strcmp(invoked_right, "erasure") ||
+							!strcmp(invoked_right, "restriction")   || !strcmp(invoked_right, "object")   ||
+							!strcmp(invoked_right, "no_autodecisions"))
+					{
+						/* C3-2: Broker triggers actions on data (e.g., erase, restrict). */
+						broker_send_response_status(context->id, correlation_data, "Request noted");
+						subscriber_list *sub_list = find_subscribers_with_data(context->id, data_filter);
+						subscriber_list *offline = forward_request_to_connected(sub_list, correlation_data, invoked_right, data_filter);
+						if(offline){
+							broker_send_response_pending(context->id, correlation_data, offline, 60);
+						}
+					}
+					else
+					{
+						/* Unrecognized right. */
+						broker_send_response_failure(context->id, correlation_data, "Unknown right");
+					}
+				   
+					mosquitto_property_free_all(&properties);
+					db__msg_store_free(base_msg);
+
+					mosquitto_FREE(invoked_right);
+					mosquitto_FREE(data_filter);
+					mosquitto_FREE(remove_stored);
+					mosquitto_FREE(gdpr_reason);
+					mosquitto_FREE(correlation_data);
+					return MOSQ_ERR_SUCCESS;
+       			}
+       			/* (4) RN: Right Notification to all publishers */
+       			else if(!strncmp(topic, MOSQ_PF_TOPIC_RN, 2))
+       			{
+           			/* handle RN */
+           			log__printf(NULL, MOSQ_LOG_INFO, 
+               			"[RN] Notification of right '%s', swallowing.",
+               			invoked_right ? invoked_right : "(null)");
+
+					rr_store_request(context->id, correlation_data, invoked_right, data_filter);
+					mosquitto_property_free_all(&properties);
+					db__msg_store_free(base_msg);
+
+					mosquitto_FREE(invoked_right);
+					mosquitto_FREE(data_filter);
+					mosquitto_FREE(remove_stored);
+					mosquitto_FREE(gdpr_reason);
+					mosquitto_FREE(correlation_data);
+					return MOSQ_ERR_SUCCESS;
+       			}
+       			/* (5) RNP: Right Notification to specific publisher */
+       			else if(!strncmp(topic, MOSQ_PF_TOPIC_RNP, 3))
+       			{
+           			/* handle RNP */
+           			log__printf(NULL, MOSQ_LOG_INFO, 
+               			"[RNP] Notification of right '%s' for a specific publisher, swallowing.",
+               			invoked_right ? invoked_right : "(null)");
+
+					rr_store_request(context->id, correlation_data, invoked_right, data_filter);
+					mosquitto_property_free_all(&properties);
+					db__msg_store_free(base_msg);
+
+					mosquitto_FREE(invoked_right);
+					mosquitto_FREE(data_filter);
+					mosquitto_FREE(remove_stored);
+					mosquitto_FREE(gdpr_reason);
+					mosquitto_FREE(correlation_data);
+					return MOSQ_ERR_SUCCESS;
+       			}
+   			}
+   			/* If no PF-Right is found or the topic is not recognized, do normal data publish.*/
+    		mosquitto_FREE(invoked_right);
+    		mosquitto_FREE(data_filter);
+    		mosquitto_FREE(remove_stored);
+    		mosquitto_FREE(gdpr_reason);
+    		mosquitto_FREE(correlation_data);
+			return rc;
+		}	
+		
 
 		rc = property__process_publish(base_msg, &properties, &topic_alias, &message_expiry_interval);
 		if(rc){
