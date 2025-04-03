@@ -66,7 +66,7 @@ OBJS=	mosquitto.o \
 		mux_epoll.o \
 		mux_kqueue.o \
 		mux_poll.o \
-		rights_broker.o
+		rights_broker.o \
 		net.o \
 		property_broker.o \
 		persist_read.o \

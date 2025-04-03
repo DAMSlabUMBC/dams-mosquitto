@@ -140,73 +140,76 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 		}
 
 		/* Purpose filtering */
-		if(db.config->purpose_filtering)
+		if(db.config->use_protection_framework)
 		{
-			bool allow_all_purposes = ((strcmp(stored->data.purpose_filter, "*") == 0));
-
-			/* (1) Per Message Filtering and (2) Message Registration */
-			if(db.config->purpose_filter_method == MOSQ_PF_PER_MSG || db.config->purpose_filter_method == MOSQ_PF_MSG_REG)
+			if(db.config->purpose_filtering)
 			{
-				if(!allow_all_purposes)
-				{
-					/* Reject if the subscription has no purpose filter */
-					if(leaf->purpose_filter_count <= 0)
-					{
-						leaf = leaf->next;
-						continue;
-					}
+				bool allow_all_purposes = ((strcmp(stored->data.purpose_filter, "*") == 0));
 
-					/* Match the message filter with the subscription */
-					bool filter_found = false;
-					for(uint8_t i = 0; i < leaf->purpose_filter_count; i++)
+				/* (1) Per Message Filtering and (2) Message Registration */
+				if(db.config->purpose_filter_method == MOSQ_PF_PER_MSG || db.config->purpose_filter_method == MOSQ_PF_MSG_REG)
+				{
+					if(!allow_all_purposes)
 					{
-						if(strcmp(leaf->purpose_filters[i], stored->data.purpose_filter) == 0)
+						/* Reject if the subscription has no purpose filter */
+						if(leaf->purpose_filter_count <= 0)
 						{
-							filter_found = true;
-							break;
+							leaf = leaf->next;
+							continue;
+						}
+
+						/* Match the message filter with the subscription */
+						bool filter_found = false;
+						for(uint8_t i = 0; i < leaf->purpose_filter_count; i++)
+						{
+							if(strcmp(leaf->purpose_filters[i], stored->data.purpose_filter) == 0)
+							{
+								filter_found = true;
+								break;
+							}
+						}
+
+						if(!filter_found)
+						{
+							leaf = leaf->next;
+							continue;
 						}
 					}
+				}
 
-					if(!filter_found)
+				/* (3) Topic Registration */
+				else if (db.config->purpose_filter_method == MOSQ_PF_TOPIC_REG)
+				{
+					/* There needs to be a registered SP for this topic */
+					char *registered_sp = sp__lookup_topic(leaf->context->id, leaf->topic_filter);
+					if(!registered_sp)
 					{
 						leaf = leaf->next;
-						continue;
+							continue;
 					}
-				}
-			}
 
-			/* (3) Topic Registration */
-			else if (db.config->purpose_filter_method == MOSQ_PF_TOPIC_REG)
-			{
-				/* There needs to be a registered SP for this topic */
-				char *registered_sp = sp__lookup_topic(leaf->context->id, leaf->topic_filter);
-				if(!registered_sp)
-				{
-					leaf = leaf->next;
-						continue;
-				}
-
-				if(!allow_all_purposes)
-				{
-					/* Match the message filter with the subscription */
-					bool filter_found = false;
-
-					uint32_t num_results = 0;
-					char** purposes = parse_purpose_filter(registered_sp, &num_results);
-
-					for(uint8_t i = 0; i < num_results; i++)
+					if(!allow_all_purposes)
 					{
-						if(strcmp(purposes[i], stored->data.purpose_filter) == 0)
+						/* Match the message filter with the subscription */
+						bool filter_found = false;
+
+						uint32_t num_results = 0;
+						char** purposes = parse_purpose_filter(registered_sp, &num_results);
+
+						for(uint8_t i = 0; i < num_results; i++)
 						{
-							filter_found = true;
-							break;
+							if(strcmp(purposes[i], stored->data.purpose_filter) == 0)
+							{
+								filter_found = true;
+								break;
+							}
 						}
-					}
 
-					if(!filter_found)
-					{
-						leaf = leaf->next;
-						continue;
+						if(!filter_found)
+						{
+							leaf = leaf->next;
+							continue;
+						}
 					}
 				}
 			}

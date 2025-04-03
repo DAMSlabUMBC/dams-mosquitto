@@ -123,23 +123,38 @@ enum mosq_transport_t {
 #define MOSQ_PF_MP_REG_TOPIC "$PF/MP_reg/"
 #define MOSQ_PF_SP_REG_TOPIC "$PF/SP_reg/"
 #define MOSQ_PF_ALLOW_ALL_FILTER "*"
+#define MOSQ_PF_ID_KEY "PF-ClientID"
+#define MOSQ_PF_CONSENT_KEY "PF-Allow"
+#define MOSQ_PF_OP_KEY "PF-Operation"
+#define MOSQ_PF_OP_INFO_KEY "PF-OpInfo"
+#define MOSQ_PF_REASON_KEY "PF-Reason"
+#define MOSQ_PF_DEADLINE_KEY "PF-Deadline"
+#define MOSQ_PF_STATUS_KEY "PF-Status"
+#define MOSQ_PF_UNREACHED_CLIENTS_KEY "PF-UnreachedClients"
+#define MOSQ_PF_TOPIC_OR "OR"     
+#define MOSQ_PF_TOPIC_ORS "ORS"    
+#define MOSQ_PF_TOPIC_OSYS "$OSYS"  
+#define MOSQ_PF_TOPIC_ON "ON"    
+#define MOSQ_PF_TOPIC_ONP "ONP"  
+#define MOSQ_PF_OP_PURPOSE "PF_op"    
+#define MOSQ_PF_MAX_FILTERS_PER_SUB 100
+
+/* Need to remove these */
 #define MOSQ_PF_RIGHT_KEY "PF-Right"
 #define MOSQ_PF_RIGHT_INFO_KEY "PF-RightInfo"
 #define MOSQ_PF_GDPR_REASON_KEY "GDPR-Reason"
 #define MOSQ_PF_DATA_FILTER_KEY "PF-DataFilter"
 #define MOSQ_PF_PURPOSE_FILTER_KEY "PF-PurposeFilter"
 #define MOSQ_PF_CORRELATION_DATA_KEY "PF-CorrData"
-#define MOSQ_PF_DEADLINE_KEY "PF-Deadline"
 #define MOSQ_PF_REMOVE_STORED_KEY "PF-RemoveStoredMessages"
-#define MOSQ_PF_STATUS_KEY "PF-Status"
 #define MOSQ_PF_DATA_KEY "PF-Data"
-#define MOSQ_PF_SUBSCRIBERS_TO_CONTACT_KEY "PF-SubscribersToContact"
+#define MOSQ_PF_SUBSCRIBERS_TO_CONTACT_KEY "PF-SubscribersToContactd"
 #define MOSQ_PF_TOPIC_RR "RR"     
 #define MOSQ_PF_TOPIC_RRS "RRS"    
 #define MOSQ_PF_TOPIC_RSYS "$RSYS"  
 #define MOSQ_PF_TOPIC_RN "RN"    
 #define MOSQ_PF_TOPIC_RNP "RNP"  
-#define MOSQ_PF_MAX_FILTERS_PER_SUB 100
+
 
 #define MQTT_PROTOCOL_V31 3
 #define MQTT_PROTOCOL_V311 4

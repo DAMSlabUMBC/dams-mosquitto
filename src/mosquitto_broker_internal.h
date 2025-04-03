@@ -349,8 +349,10 @@ struct mosquitto__config {
 	int sys_interval;
 	bool upgrade_outgoing_qos;
 	char *user;
+	bool use_protection_framework;
 	bool purpose_filtering;
 	int purpose_filter_method;
+	bool metadata_operation_handling;
 #if defined(WITH_WEBSOCKETS) && WITH_WEBSOCKETS == WS_IS_LWS
 	int websockets_log_level;
 #endif

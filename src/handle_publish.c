@@ -58,7 +58,7 @@ int handle__publish(struct mosquitto *context)
 	uint16_t mid = 0;
 
 	bool found_purpose_filter = false;
-	char* purpose_filter;
+	char* purpose_filter = NULL;
 
 	if(context->state != mosq_cs_active){
 		return MOSQ_ERR_PROTOCOL;
@@ -130,55 +130,57 @@ int handle__publish(struct mosquitto *context)
 			return rc;
 		}
 
-		/* Check if purpose filtering is enabled */
-		if(db.config->purpose_filtering)
+		/* Only run the below if using the framework */
+		if(db.config->use_protection_framework)
 		{
-			/* (1) Per-Message Declaration */
-			if(db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
+			/* Immediately check for consent and disallow if not given */
+			const mosquitto_property *curr_prop_ptr = properties;
+			bool consent_given = false;
+			while(curr_prop_ptr)
 			{
-				/* Since there can be multiple user properties, loop through them */
-				const mosquitto_property *curr_prop_ptr = properties;
-				while(curr_prop_ptr)
+				/* Parse the current property name/value */
+				char *name, *value;
+
+				curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false );
+				if(curr_prop_ptr)
 				{
-					/* Parse the current property name/value */
-					char *name, *value;
-					curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false );
-					if(curr_prop_ptr)
+					/* Check if this is the consent property */
+					if(!strcmp(name, MOSQ_PF_CONSENT_KEY))
 					{
-						/* Check if this is a PF-MP property */
-						if(!strcmp(name, MOSQ_PF_MP_KEY))
+						/* If value is "1", consent given, keep processing. Otherwise reject */
+						if(!strcmp(value, "1"))
 						{
-							/* Message cannot have multiple purpose filters */
-							if(found_purpose_filter)
-							{
-								log__printf(NULL, MOSQ_LOG_INFO,
-									"More than one purpose filter from %s, rejecting.",
-									context->id);
-								mosquitto_property_free_all(&properties);
-								return MOSQ_ERR_MALFORMED_PACKET;
-							}
-	
-							/* Allocate memory for the filter */
-							char *filter = mosquitto_malloc(strlen(value) + 1);
-							if(!filter)
-							{
-								mosquitto_property_free_all(&properties);
-								return MOSQ_ERR_NOMEM;
-							}
-							strcpy(filter, value);
-							purpose_filter = filter;
-							found_purpose_filter = true;
+							consent_given = true;
+							break;
 						}
-						/* Move to the next property */
-						curr_prop_ptr = curr_prop_ptr->next;
+						else
+						{
+							log__printf(NULL, MOSQ_LOG_INFO,
+								"Consent not given for packet from %s, rejecting.",
+								context->id);
+							mosquitto_property_free_all(&properties);
+							return MOSQ_ERR_MALFORMED_PACKET;
+						}
 					}
+					/* Move to the next property */
+					curr_prop_ptr = curr_prop_ptr->next;
 				}
 			}
-			/* (2) Registration by Message */
-			else if(db.config->purpose_filter_method == MOSQ_PF_MSG_REG)
+
+			if(!consent_given)
 			{
-				/* Check if this is a registration message on $PF/purpose_management */
-				if(!strcmp(base_msg->data.topic, MOSQ_PF_PM_TOPIC))
+				log__printf(NULL, MOSQ_LOG_INFO,
+					"Consent not given for packet from %s, rejecting.",
+					context->id);
+				mosquitto_property_free_all(&properties);
+				return MOSQ_ERR_MALFORMED_PACKET;
+			}
+
+			/* Check if purpose filtering is enabled */
+			if(db.config->purpose_filtering)
+			{
+				/* (1) Per-Message Declaration */
+				if(db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
 				{
 					/* Since there can be multiple user properties, loop through them */
 					const mosquitto_property *curr_prop_ptr = properties;
@@ -192,400 +194,437 @@ int handle__publish(struct mosquitto *context)
 							/* Check if this is a PF-MP property */
 							if(!strcmp(name, MOSQ_PF_MP_KEY))
 							{
-								char *temp, *filter, *topic = NULL;
-
-								/* In Registration by Message, MP is of the form '<MP>:<topic> */
-								temp = strchr(value, ':');
-
-								if (temp == NULL)
+								/* Message cannot have multiple purpose filters */
+								if(found_purpose_filter)
 								{
+									log__printf(NULL, MOSQ_LOG_INFO,
+										"More than one purpose filter from %s, rejecting.",
+										context->id);
 									mosquitto_property_free_all(&properties);
 									return MOSQ_ERR_MALFORMED_PACKET;
 								}
-
-								uint32_t index = (uint32_t)(temp - value);
-								temp++; /* Skip the ':' */
-								
-								// Allocate memory for topic and purpose
-								filter = mosquitto_malloc(index + 1);
-								topic = mosquitto_malloc(strlen(temp) + 1);
-								if(!filter || !topic)
+		
+								/* Allocate memory for the filter */
+								char *filter = mosquitto_malloc(strlen(value) + 1);
+								if(!filter)
 								{
 									mosquitto_property_free_all(&properties);
 									return MOSQ_ERR_NOMEM;
 								}
-
-								// Copy
-								filter = strncpy(filter, value, index);
-								filter[index] = '\0';
-								topic = strcpy(topic, temp);
-
-								/* Register the topic to purpose filter mapping */
-								mp__register_topic(context->id, topic, filter);
+								strcpy(filter, value);
+								purpose_filter = filter;
+								found_purpose_filter = true;
 							}
 							/* Move to the next property */
 							curr_prop_ptr = curr_prop_ptr->next;
 						}
 					}
-
-					/* Do not forward this registration message */
-					mosquitto_property_free_all(&properties);
-					return MOSQ_ERR_SUCCESS;
 				}
-				else
+				/* (2) Registration by Message */
+				else if(db.config->purpose_filter_method == MOSQ_PF_MSG_REG)
 				{
-					/* Normal data publish: lookup stored purpose filter */
-					char *stored = mp__lookup_topic(context->id, base_msg->data.topic);
-					if(stored)
+					/* Check if this is a registration message on $PF/purpose_management */
+					if(!strcmp(base_msg->data.topic, MOSQ_PF_PM_TOPIC))
 					{
-						base_msg->data.purpose_filter = mosquitto_strdup(stored);
-						base_msg->data.has_purpose_filter = true;
-					}
-					else
-					{
-						/* Copy "deny all" filter*/
-						base_msg->data.purpose_filter = mosquitto_strdup("");
-						base_msg->data.has_purpose_filter = true;
-					}
-				}
-			}
-			/* (3) Registration by Topic */
-			else if(db.config->purpose_filter_method == MOSQ_PF_TOPIC_REG)
-			{
-				/* Check if this is a registration topic starting with $PF/MP_reg/ */
-				if(strlen(base_msg->data.topic) >= strlen(MOSQ_PF_MP_REG_TOPIC) && !strncmp(base_msg->data.topic, MOSQ_PF_MP_REG_TOPIC, strlen(MOSQ_PF_MP_REG_TOPIC)))
-				{
-					/* Parse out real_topic and mp_value from the bracketed suffix */
-					const char *rest = base_msg->data.topic + strlen(MOSQ_PF_MP_REG_TOPIC);
-					char rt[256] = {0}, mp[256] = {0};
-	
-					const char *b = strchr(rest, '[');
-					if(!b)
-					{
-						mosquitto_property_free_all(&properties);
-						return MOSQ_ERR_PROTOCOL;
-					}
-	
-					size_t rlen = b - rest;
-					if(rlen > 255) rlen = 255;
-					memcpy(rt, rest, rlen);
-					rt[rlen] = '\0';
-	
-					const char *eb = strrchr(b, ']');
-					if(!eb) return MOSQ_ERR_PROTOCOL;
-					size_t mlen = eb - (b + 1);
-					if(mlen > 255) mlen = 255;
-					memcpy(mp, b + 1, mlen);
-					mp[mlen] = '\0';
-	
-					mp__register_topic(context->id, rt, mp);
-
-					/* Do not forward registration */
-					mosquitto_property_free_all(&properties);
-					return MOSQ_ERR_SUCCESS;
-				}
-				/* Check if the subscription topic begins with "$PF/SP_reg/" */
-				else if(strlen(base_msg->data.topic) >= strlen(MOSQ_PF_SP_REG_TOPIC) && !strncmp(base_msg->data.topic, MOSQ_PF_SP_REG_TOPIC, strlen(MOSQ_PF_SP_REG_TOPIC)))
-				{
-					/*  Parse the special subscription topic of the form */
-					const char *rest = base_msg->data.topic + strlen(MOSQ_PF_SP_REG_TOPIC);
-
-					/* SP can contain replacement terms for wildcards */
-					char* curr_string = malloc(strlen(rest) + 1);
-    				strcpy(curr_string, rest);
-
-					int found = 1;
-					while(found)
-					{
-						found = 0;
-						
-						// Check for HASH first
-						char* replace_start = strstr(curr_string, "HASH");
-						if(replace_start != NULL)
+						/* Since there can be multiple user properties, loop through them */
+						const mosquitto_property *curr_prop_ptr = properties;
+						while(curr_prop_ptr)
 						{
-							size_t start_index = (size_t)(replace_start - curr_string);
-							char* hash_end = replace_start + 4;
-							size_t len_after_hash = strlen(hash_end);
-							
-							curr_string[start_index] = '#'; // Replace next part with literal '#'
-							strncpy(&curr_string[start_index + 1], hash_end, len_after_hash); // Fill in the rest
-							curr_string[start_index + len_after_hash + 1] = '\0';
-							found = 1;
-						}
-						
-						// Now check for PLUS
-						replace_start = strstr(curr_string, "PLUS");
-						if(replace_start != NULL)
-						{
-							size_t start_index = (size_t)(replace_start - curr_string);
-							char* hash_end = replace_start + 4;
-							size_t len_after_hash = strlen(hash_end);
-							
-							curr_string[start_index] = '+'; // Replace next part with literal '#'
-							strncpy(&curr_string[start_index + 1], hash_end, len_after_hash); // Fill in the rest
-							curr_string[start_index + len_after_hash + 1] = '\0';
-							found = 1;
-						}
-					}
+							/* Parse the current property name/value */
+							char *name, *value;
+							curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false );
+							if(curr_prop_ptr)
+							{
+								/* Check if this is a PF-MP property */
+								if(!strcmp(name, MOSQ_PF_MP_KEY))
+								{
+									char *temp, *filter, *topic = NULL;
 
-					rest = curr_string;
-					
-					/* Buffers for the real topic and the subscriber SP */
-					char rt[256] = {0};
-					char sp_val[256] = {0};
-					const char *b = strchr(rest, '[');
-					if (!b)
-					{
-						log__printf(NULL, MOSQ_LOG_INFO, 
-							"SP registration error: missing '[' in %s", base_msg->data.topic);
-						mosquitto_property_free_all(&properties);
-						return MOSQ_ERR_INVAL;
-					}
-			
-					/* Calculate and copy the real topic */
-					size_t rlen = b - rest;
-					if (rlen > 255)
-						rlen = 255;
-					memcpy(rt, rest, rlen);
-					rt[rlen] = '\0';
-			
-					/* Find the closing bracket that ends the SP value */
-					const char *eb = strrchr(b, ']');
-					if (!eb)
-					{
-						log__printf(NULL, MOSQ_LOG_INFO, 
-							"SP registration error: missing ']' in %s", base_msg->data.topic);
-						return MOSQ_ERR_INVAL;
-					}
-			
-					/* Copy the subscriber SP */
-					size_t splen = eb - (b + 1);
-					if (splen > 255)
-						splen = 255;
-					memcpy(sp_val, b + 1, splen);
-					sp_val[splen] = '\0';
-			
-					/* Register this SP for the real topic in the sp_registry */
-					sp__register_topic(context->id, rt, sp_val);
+									/* In Registration by Message, MP is of the form '<MP>:<topic> */
+									temp = strchr(value, ':');
 
-					/* Return success so that this is not forwarded as a normal subscription */
-					mosquitto_property_free_all(&properties);
-					return MOSQ_ERR_SUCCESS;
-				}
-				else
-				{
-					/* Normal data publish */
-					char *stored = mp__lookup_topic(context->id, base_msg->data.topic);
-					if(stored)
-					{
-						base_msg->data.purpose_filter = mosquitto_strdup(stored);
-						base_msg->data.has_purpose_filter = true;
-					}
-					else
-					{
-						/* Copy "deny all" filter*/
-						base_msg->data.purpose_filter = mosquitto_strdup("");
-						base_msg->data.has_purpose_filter = true;
-					}
-				}
-			}
-			
-			/* Check if this publish includes a PF-Right user property. */
-    		bool found_pf_right = false;
-    		bool found_pf_datafilter = false;
-    		char *invoked_right = NULL;
-    		char *data_filter = NULL;
-    		char *gdpr_reason = NULL;
-    		char *remove_stored = NULL;
-    		char *correlation_data = NULL; 
-			uint32_t pf_deadline = 0; 
-			
+									if (temp == NULL)
+									{
+										mosquitto_property_free_all(&properties);
+										return MOSQ_ERR_MALFORMED_PACKET;
+									}
 
-    		/* Look through the user properties for PF-Right */
-			const mosquitto_property *p = properties;
-   			while(p){
-        		if(p->identifier == MQTT_PROP_USER_PROPERTY){
-            		char *name=NULL, *value=NULL;
-            		mosquitto_property_read_string_pair(p, MQTT_PROP_USER_PROPERTY, &name, &value, false);
+									uint32_t index = (uint32_t)(temp - value);
+									temp++; /* Skip the ':' */
+									
+									// Allocate memory for topic and purpose
+									filter = mosquitto_malloc(index + 1);
+									topic = mosquitto_malloc(strlen(temp) + 1);
+									if(!filter || !topic)
+									{
+										mosquitto_property_free_all(&properties);
+										return MOSQ_ERR_NOMEM;
+									}
 
-            		if(name && value){
-						/* If we find PF-Right then note it. */
-                		if(!strcmp(name, MOSQ_PF_RIGHT_KEY)){
-                    		found_pf_right = true;
-                    		invoked_right  = mosquitto_strdup(value);
-                		} else if(!strcmp(name, MOSQ_PF_DATA_FILTER_KEY)){
-                    		data_filter = mosquitto_strdup(value);
-                		} else if(!strcmp(name, MOSQ_PF_REMOVE_STORED_KEY)){
-                    		remove_stored = mosquitto_strdup(value);
-                		} else if(!strcmp(name, MOSQ_PF_GDPR_REASON_KEY)){
-                    		gdpr_reason = mosquitto_strdup(value);
-                		} else if(!strcmp(name, MOSQ_PF_CORRELATION_DATA_KEY)){
-                    		correlation_data = mosquitto_strdup(value);
-                		} else if(!strcmp(name, MOSQ_PF_DEADLINE_KEY)){
-                    		pf_deadline = (uint32_t)atoi(value);
-                		}
-            		}
-        		}
-				/* Move to next property. */
-        		p = p->next;
-    		}
-    	
-    		/* If a PF-Right was found, check the topic to see which of the five 
-     		* MQTT-PF Right Invocation topics it might match.
-     		*/
-    		if(found_pf_right)
-    		{
-        		const char *topic = base_msg->data.topic;
+									// Copy
+									filter = strncpy(filter, value, index);
+									filter[index] = '\0';
+									topic = strcpy(topic, temp);
 
-				/* (1) RR: Right Request */
-       			if(!strncmp(topic, MOSQ_PF_TOPIC_RR, 2))
-       			{
-           			/* handle RR */
-           			log__printf(NULL, MOSQ_LOG_INFO, 
-               			"[RR] Found right '%s' from %s, swallowing.",
-               			invoked_right ? invoked_right : "(null)", context->id);
-            			
-					rr_store_request(context->id, correlation_data, invoked_right, data_filter);
-					mosquitto_property_free_all(&properties);
-					db__msg_store_free(base_msg);
-
-					mosquitto_FREE(invoked_right);
-					mosquitto_FREE(data_filter);
-					mosquitto_FREE(remove_stored);
-					mosquitto_FREE(gdpr_reason);
-					mosquitto_FREE(correlation_data);
-					return MOSQ_ERR_SUCCESS;
-        		}
-        		/* (2) RRS: Subscriber-Keyed Right Request */
-        		else if(!strncmp(topic, MOSQ_PF_TOPIC_RRS, 3))
-        		{
-           			/* handle RRS */
-           			log__printf(NULL, MOSQ_LOG_INFO, 
-               			"[RRS] Found right '%s' from %s, swallowing.",
-               			invoked_right ? invoked_right : "(null)", context->id);
-
-					rr_store_request(context->id, correlation_data, invoked_right, data_filter);
-					mosquitto_property_free_all(&properties);
-					db__msg_store_free(base_msg);
-					
-					mosquitto_FREE(invoked_right);
-					mosquitto_FREE(data_filter);
-					mosquitto_FREE(remove_stored);
-					mosquitto_FREE(gdpr_reason);
-					mosquitto_FREE(correlation_data);
-					return MOSQ_ERR_SUCCESS;
-        		}
-        		/* (3) $RSYS: Right System topic */
-        		else if(!strncmp(topic, MOSQ_PF_TOPIC_RSYS, 5))
-        		{
-           			/* handle RSYS */   
-					rr_store_request(context->id, correlation_data, invoked_right, data_filter);
-
-					if(remove_stored){
-						/* Handle "WILL" or "RETAINED:..." for erasure. */
-						handle_remove_stored_messages(context->id, remove_stored);
-					}
-				   
-					/* Check which right is invoked. */
-					if(!strcmp(invoked_right, "be_informed"))
-					{
-						/* C1-2: Broker sends its own info, then retrieves subscriber info. */
-						broker_send_response_status(context->id, correlation_data, "Broker info");
-						subscription_list *subs = find_subscriptions_for_publisher(context->id);
-						while(subs){
-							const char *info = ri__lookup_info(subs->subscriber_id, subs->topic);
-							if(info){
-								broker_send_response_data(context->id, correlation_data, info);
+									/* Register the topic to purpose filter mapping */
+									mp__register_topic(context->id, topic, filter);
+								}
+								/* Move to the next property */
+								curr_prop_ptr = curr_prop_ptr->next;
 							}
-							subs = subs->next;
 						}
-					}
-					else if(!strcmp(invoked_right, "access") || !strcmp(invoked_right, "data_portability"))
-					{
-						/* C2-2: Provide broker info, forward requests only to subs that have data. */
-						broker_send_response_status(context->id, correlation_data, "Broker data snippet");
-						subscriber_list *sub_list = find_subscribers_with_data(context->id, data_filter);
-						subscriber_list *offline = forward_request_to_connected(sub_list, correlation_data, invoked_right, data_filter);
-						if(offline){
-							broker_send_response_pending(context->id, correlation_data, offline, 60);
-						}
-					}
-					else if(!strcmp(invoked_right, "rectification") || !strcmp(invoked_right, "erasure") ||
-							!strcmp(invoked_right, "restriction")   || !strcmp(invoked_right, "object")   ||
-							!strcmp(invoked_right, "no_autodecisions"))
-					{
-						/* C3-2: Broker triggers actions on data (e.g., erase, restrict). */
-						broker_send_response_status(context->id, correlation_data, "Request noted");
-						subscriber_list *sub_list = find_subscribers_with_data(context->id, data_filter);
-						subscriber_list *offline = forward_request_to_connected(sub_list, correlation_data, invoked_right, data_filter);
-						if(offline){
-							broker_send_response_pending(context->id, correlation_data, offline, 60);
-						}
+
+						/* Do not forward this registration message */
+						mosquitto_property_free_all(&properties);
+						return MOSQ_ERR_SUCCESS;
 					}
 					else
 					{
-						/* Unrecognized right. */
-						broker_send_response_failure(context->id, correlation_data, "Unknown right");
+						/* Normal data publish: lookup stored purpose filter */
+						char *stored = mp__lookup_topic(context->id, base_msg->data.topic);
+						if(stored)
+						{
+							base_msg->data.purpose_filter = mosquitto_strdup(stored);
+							base_msg->data.has_purpose_filter = true;
+						}
+						else
+						{
+							/* Copy "deny all" filter*/
+							base_msg->data.purpose_filter = mosquitto_strdup("");
+							base_msg->data.has_purpose_filter = true;
+						}
 					}
-				   
-					mosquitto_property_free_all(&properties);
-					db__msg_store_free(base_msg);
-
-					mosquitto_FREE(invoked_right);
-					mosquitto_FREE(data_filter);
-					mosquitto_FREE(remove_stored);
-					mosquitto_FREE(gdpr_reason);
-					mosquitto_FREE(correlation_data);
-					return MOSQ_ERR_SUCCESS;
-       			}
-       			/* (4) RN: Right Notification to all publishers */
-       			else if(!strncmp(topic, MOSQ_PF_TOPIC_RN, 2))
-       			{
-           			/* handle RN */
-           			log__printf(NULL, MOSQ_LOG_INFO, 
-               			"[RN] Notification of right '%s', swallowing.",
-               			invoked_right ? invoked_right : "(null)");
-
-					rr_store_request(context->id, correlation_data, invoked_right, data_filter);
-					mosquitto_property_free_all(&properties);
-					db__msg_store_free(base_msg);
-
-					mosquitto_FREE(invoked_right);
-					mosquitto_FREE(data_filter);
-					mosquitto_FREE(remove_stored);
-					mosquitto_FREE(gdpr_reason);
-					mosquitto_FREE(correlation_data);
-					return MOSQ_ERR_SUCCESS;
-       			}
-       			/* (5) RNP: Right Notification to specific publisher */
-       			else if(!strncmp(topic, MOSQ_PF_TOPIC_RNP, 3))
-       			{
-           			/* handle RNP */
-           			log__printf(NULL, MOSQ_LOG_INFO, 
-               			"[RNP] Notification of right '%s' for a specific publisher, swallowing.",
-               			invoked_right ? invoked_right : "(null)");
-
-					rr_store_request(context->id, correlation_data, invoked_right, data_filter);
-					mosquitto_property_free_all(&properties);
-					db__msg_store_free(base_msg);
-
-					mosquitto_FREE(invoked_right);
-					mosquitto_FREE(data_filter);
-					mosquitto_FREE(remove_stored);
-					mosquitto_FREE(gdpr_reason);
-					mosquitto_FREE(correlation_data);
-					return MOSQ_ERR_SUCCESS;
-       			}
-   			}
-   			/* If no PF-Right is found or the topic is not recognized, do normal data publish.*/
-    		mosquitto_FREE(invoked_right);
-    		mosquitto_FREE(data_filter);
-    		mosquitto_FREE(remove_stored);
-    		mosquitto_FREE(gdpr_reason);
-    		mosquitto_FREE(correlation_data);
-			return rc;
-		}	
+				}
+				/* (3) Registration by Topic */
+				else if(db.config->purpose_filter_method == MOSQ_PF_TOPIC_REG)
+				{
+					/* Check if this is a registration topic starting with $PF/MP_reg/ */
+					if(strlen(base_msg->data.topic) >= strlen(MOSQ_PF_MP_REG_TOPIC) && !strncmp(base_msg->data.topic, MOSQ_PF_MP_REG_TOPIC, strlen(MOSQ_PF_MP_REG_TOPIC)))
+					{
+						/* Parse out real_topic and mp_value from the bracketed suffix */
+						const char *rest = base_msg->data.topic + strlen(MOSQ_PF_MP_REG_TOPIC);
+						char rt[256] = {0}, mp[256] = {0};
 		
+						const char *b = strchr(rest, '[');
+						if(!b)
+						{
+							mosquitto_property_free_all(&properties);
+							return MOSQ_ERR_PROTOCOL;
+						}
+		
+						size_t rlen = b - rest;
+						if(rlen > 255) rlen = 255;
+						memcpy(rt, rest, rlen);
+						rt[rlen] = '\0';
+		
+						const char *eb = strrchr(b, ']');
+						if(!eb) return MOSQ_ERR_PROTOCOL;
+						size_t mlen = eb - (b + 1);
+						if(mlen > 255) mlen = 255;
+						memcpy(mp, b + 1, mlen);
+						mp[mlen] = '\0';
+		
+						mp__register_topic(context->id, rt, mp);
+
+						/* Do not forward registration */
+						mosquitto_property_free_all(&properties);
+						return MOSQ_ERR_SUCCESS;
+					}
+					/* Check if the subscription topic begins with "$PF/SP_reg/" */
+					else if(strlen(base_msg->data.topic) >= strlen(MOSQ_PF_SP_REG_TOPIC) && !strncmp(base_msg->data.topic, MOSQ_PF_SP_REG_TOPIC, strlen(MOSQ_PF_SP_REG_TOPIC)))
+					{
+						/*  Parse the special subscription topic of the form */
+						const char *rest = base_msg->data.topic + strlen(MOSQ_PF_SP_REG_TOPIC);
+
+						/* SP can contain replacement terms for wildcards */
+						char* curr_string = malloc(strlen(rest) + 1);
+						strcpy(curr_string, rest);
+
+						int found = 1;
+						while(found)
+						{
+							found = 0;
+							
+							// Check for HASH first
+							char* replace_start = strstr(curr_string, "HASH");
+							if(replace_start != NULL)
+							{
+								size_t start_index = (size_t)(replace_start - curr_string);
+								char* hash_end = replace_start + 4;
+								size_t len_after_hash = strlen(hash_end);
+								
+								curr_string[start_index] = '#'; // Replace next part with literal '#'
+								strncpy(&curr_string[start_index + 1], hash_end, len_after_hash); // Fill in the rest
+								curr_string[start_index + len_after_hash + 1] = '\0';
+								found = 1;
+							}
+							
+							// Now check for PLUS
+							replace_start = strstr(curr_string, "PLUS");
+							if(replace_start != NULL)
+							{
+								size_t start_index = (size_t)(replace_start - curr_string);
+								char* hash_end = replace_start + 4;
+								size_t len_after_hash = strlen(hash_end);
+								
+								curr_string[start_index] = '+'; // Replace next part with literal '#'
+								strncpy(&curr_string[start_index + 1], hash_end, len_after_hash); // Fill in the rest
+								curr_string[start_index + len_after_hash + 1] = '\0';
+								found = 1;
+							}
+						}
+
+						rest = curr_string;
+						
+						/* Buffers for the real topic and the subscriber SP */
+						char rt[256] = {0};
+						char sp_val[256] = {0};
+						const char *b = strchr(rest, '[');
+						if (!b)
+						{
+							log__printf(NULL, MOSQ_LOG_INFO, 
+								"SP registration error: missing '[' in %s", base_msg->data.topic);
+							mosquitto_property_free_all(&properties);
+							return MOSQ_ERR_INVAL;
+						}
+				
+						/* Calculate and copy the real topic */
+						size_t rlen = b - rest;
+						if (rlen > 255)
+							rlen = 255;
+						memcpy(rt, rest, rlen);
+						rt[rlen] = '\0';
+				
+						/* Find the closing bracket that ends the SP value */
+						const char *eb = strrchr(b, ']');
+						if (!eb)
+						{
+							log__printf(NULL, MOSQ_LOG_INFO, 
+								"SP registration error: missing ']' in %s", base_msg->data.topic);
+							return MOSQ_ERR_INVAL;
+						}
+				
+						/* Copy the subscriber SP */
+						size_t splen = eb - (b + 1);
+						if (splen > 255)
+							splen = 255;
+						memcpy(sp_val, b + 1, splen);
+						sp_val[splen] = '\0';
+				
+						/* Register this SP for the real topic in the sp_registry */
+						sp__register_topic(context->id, rt, sp_val);
+
+						/* Return success so that this is not forwarded as a normal subscription */
+						mosquitto_property_free_all(&properties);
+						return MOSQ_ERR_SUCCESS;
+					}
+					else
+					{
+						/* Normal data publish */
+						char *stored = mp__lookup_topic(context->id, base_msg->data.topic);
+						if(stored)
+						{
+							base_msg->data.purpose_filter = mosquitto_strdup(stored);
+							base_msg->data.has_purpose_filter = true;
+						}
+						else
+						{
+							/* Copy "deny all" filter*/
+							base_msg->data.purpose_filter = mosquitto_strdup("");
+							base_msg->data.has_purpose_filter = true;
+						}
+					}
+				}
+			}
+
+			if(db.config->metadata_operation_handling)
+			{
+				/* Read all potential operational properties */
+				bool found_op = false;
+				char *op_id = NULL;
+				char *op_info = NULL; 
+				uint32_t op_deadline = 0; 
+				
+
+				/* Look through the user properties for PF-Right */
+				const mosquitto_property *p = properties;
+				while(p){
+					if(p->identifier == MQTT_PROP_USER_PROPERTY){
+						char *name=NULL, *value=NULL;
+						mosquitto_property_read_string_pair(p, MQTT_PROP_USER_PROPERTY, &name, &value, false);
+
+						if(name && value){
+							/* If we find PF-Right then note it. */
+							if(!strcmp(name, MOSQ_PF_OP_KEY)){
+								found_op = true;
+								op_id  = mosquitto_strdup(value);
+							} else if(!strcmp(name, MOSQ_PF_OP_INFO_KEY)){
+								op_info = mosquitto_strdup(value);
+							} else if(!strcmp(name, MOSQ_PF_DEADLINE_KEY)){
+								op_deadline = (uint32_t)atoi(value);
+							}
+						}
+					}
+					/* Move to next property. */
+					p = p->next;
+				}
+			}
+		}
+    	
+    	// 	/* If a PF-Right was found, check the topic to see which of the five 
+     	// 	* MQTT-PF Right Invocation topics it might match.
+     	// 	*/
+    	// 	if(found_pf_right)
+    	// 	{
+        // 		const char *topic = base_msg->data.topic;
+
+		// 		/* (1) RR: Right Request */
+       	// 		if(!strncmp(topic, MOSQ_PF_TOPIC_RR, 2))
+       	// 		{
+        //    			/* handle RR */
+        //    			log__printf(NULL, MOSQ_LOG_INFO, 
+        //        			"[RR] Found right '%s' from %s, swallowing.",
+        //        			invoked_right ? invoked_right : "(null)", context->id);
+            			
+		// 			rr_store_request(context->id, correlation_data, invoked_right, data_filter);
+		// 			mosquitto_property_free_all(&properties);
+		// 			db__msg_store_free(base_msg);
+
+		// 			mosquitto_FREE(invoked_right);
+		// 			mosquitto_FREE(data_filter);
+		// 			mosquitto_FREE(remove_stored);
+		// 			mosquitto_FREE(gdpr_reason);
+		// 			mosquitto_FREE(correlation_data);
+		// 			return MOSQ_ERR_SUCCESS;
+        // 		}
+        // 		/* (2) RRS: Subscriber-Keyed Right Request */
+        // 		else if(!strncmp(topic, MOSQ_PF_TOPIC_RRS, 3))
+        // 		{
+        //    			/* handle RRS */
+        //    			log__printf(NULL, MOSQ_LOG_INFO, 
+        //        			"[RRS] Found right '%s' from %s, swallowing.",
+        //        			invoked_right ? invoked_right : "(null)", context->id);
+
+		// 			rr_store_request(context->id, correlation_data, invoked_right, data_filter);
+		// 			mosquitto_property_free_all(&properties);
+		// 			db__msg_store_free(base_msg);
+					
+		// 			mosquitto_FREE(invoked_right);
+		// 			mosquitto_FREE(data_filter);
+		// 			mosquitto_FREE(remove_stored);
+		// 			mosquitto_FREE(gdpr_reason);
+		// 			mosquitto_FREE(correlation_data);
+		// 			return MOSQ_ERR_SUCCESS;
+        // 		}
+        // 		/* (3) $RSYS: Right System topic */
+        // 		else if(!strncmp(topic, MOSQ_PF_TOPIC_RSYS, 5))
+        // 		{
+        //    			/* handle RSYS */   
+		// 			rr_store_request(context->id, correlation_data, invoked_right, data_filter);
+
+		// 			if(remove_stored){
+		// 				/* Handle "WILL" or "RETAINED:..." for erasure. */
+		// 				handle_remove_stored_messages(context->id, remove_stored);
+		// 			}
+				   
+		// 			/* Check which right is invoked. */
+		// 			if(!strcmp(invoked_right, "be_informed"))
+		// 			{
+		// 				/* C1-2: Broker sends its own info, then retrieves subscriber info. */
+		// 				broker_send_response_status(context->id, correlation_data, "Broker info");
+		// 				subscription_list *subs = find_subscriptions_for_publisher(context->id);
+		// 				while(subs){
+		// 					const char *info = ri__lookup_info(subs->subscriber_id, subs->topic);
+		// 					if(info){
+		// 						broker_send_response_data(context->id, correlation_data, info);
+		// 					}
+		// 					subs = subs->next;
+		// 				}
+		// 			}
+		// 			else if(!strcmp(invoked_right, "access") || !strcmp(invoked_right, "data_portability"))
+		// 			{
+		// 				/* C2-2: Provide broker info, forward requests only to subs that have data. */
+		// 				broker_send_response_status(context->id, correlation_data, "Broker data snippet");
+		// 				subscriber_list *sub_list = find_subscribers_with_data(context->id, data_filter);
+		// 				subscriber_list *offline = forward_request_to_connected(sub_list, correlation_data, invoked_right, data_filter);
+		// 				if(offline){
+		// 					broker_send_response_pending(context->id, correlation_data, offline, 60);
+		// 				}
+		// 			}
+		// 			else if(!strcmp(invoked_right, "rectification") || !strcmp(invoked_right, "erasure") ||
+		// 					!strcmp(invoked_right, "restriction")   || !strcmp(invoked_right, "object")   ||
+		// 					!strcmp(invoked_right, "no_autodecisions"))
+		// 			{
+		// 				/* C3-2: Broker triggers actions on data (e.g., erase, restrict). */
+		// 				broker_send_response_status(context->id, correlation_data, "Request noted");
+		// 				subscriber_list *sub_list = find_subscribers_with_data(context->id, data_filter);
+		// 				subscriber_list *offline = forward_request_to_connected(sub_list, correlation_data, invoked_right, data_filter);
+		// 				if(offline){
+		// 					broker_send_response_pending(context->id, correlation_data, offline, 60);
+		// 				}
+		// 			}
+		// 			else
+		// 			{
+		// 				/* Unrecognized right. */
+		// 				broker_send_response_failure(context->id, correlation_data, "Unknown right");
+		// 			}
+				   
+		// 			mosquitto_property_free_all(&properties);
+		// 			db__msg_store_free(base_msg);
+
+		// 			mosquitto_FREE(invoked_right);
+		// 			mosquitto_FREE(data_filter);
+		// 			mosquitto_FREE(remove_stored);
+		// 			mosquitto_FREE(gdpr_reason);
+		// 			mosquitto_FREE(correlation_data);
+		// 			return MOSQ_ERR_SUCCESS;
+       	// 		}
+       	// 		/* (4) RN: Right Notification to all publishers */
+       	// 		else if(!strncmp(topic, MOSQ_PF_TOPIC_RN, 2))
+       	// 		{
+        //    			/* handle RN */
+        //    			log__printf(NULL, MOSQ_LOG_INFO, 
+        //        			"[RN] Notification of right '%s', swallowing.",
+        //        			invoked_right ? invoked_right : "(null)");
+
+		// 			rr_store_request(context->id, correlation_data, invoked_right, data_filter);
+		// 			mosquitto_property_free_all(&properties);
+		// 			db__msg_store_free(base_msg);
+
+		// 			mosquitto_FREE(invoked_right);
+		// 			mosquitto_FREE(data_filter);
+		// 			mosquitto_FREE(remove_stored);
+		// 			mosquitto_FREE(gdpr_reason);
+		// 			mosquitto_FREE(correlation_data);
+		// 			return MOSQ_ERR_SUCCESS;
+       	// 		}
+       	// 		/* (5) RNP: Right Notification to specific publisher */
+       	// 		else if(!strncmp(topic, MOSQ_PF_TOPIC_RNP, 3))
+       	// 		{
+        //    			/* handle RNP */
+        //    			log__printf(NULL, MOSQ_LOG_INFO, 
+        //        			"[RNP] Notification of right '%s' for a specific publisher, swallowing.",
+        //        			invoked_right ? invoked_right : "(null)");
+
+		// 			rr_store_request(context->id, correlation_data, invoked_right, data_filter);
+		// 			mosquitto_property_free_all(&properties);
+		// 			db__msg_store_free(base_msg);
+
+		// 			mosquitto_FREE(invoked_right);
+		// 			mosquitto_FREE(data_filter);
+		// 			mosquitto_FREE(remove_stored);
+		// 			mosquitto_FREE(gdpr_reason);
+		// 			mosquitto_FREE(correlation_data);
+		// 			return MOSQ_ERR_SUCCESS;
+       	// 		}
+   		// 	}
+   		// 	/* If no PF-Right is found or the topic is not recognized, do normal data publish.*/
+    	// 	mosquitto_FREE(invoked_right);
+    	// 	mosquitto_FREE(data_filter);
+    	// 	mosquitto_FREE(remove_stored);
+    	// 	mosquitto_FREE(gdpr_reason);
+    	// 	mosquitto_FREE(correlation_data);
+		// 	return rc;
 
 		rc = property__process_publish(base_msg, &properties, &topic_alias, &message_expiry_interval);
 		if(rc){
@@ -629,26 +668,29 @@ int handle__publish(struct mosquitto *context)
 		return MOSQ_ERR_MALFORMED_PACKET;
 	}
 
-	/* Purpose filter must exist if filtering type is MOSQ_PF_PER_MSG */
-	if(db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
+	if(db.config->use_protection_framework && db.config->purpose_filtering)
 	{
-		if(found_purpose_filter)
+		/* Purpose filter must exist if filtering type is MOSQ_PF_PER_MSG */
+		if(db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
 		{
-			base_msg->data.purpose_filter = purpose_filter;
-			base_msg->data.has_purpose_filter = true;
+			if(found_purpose_filter)
+			{
+				base_msg->data.purpose_filter = purpose_filter;
+				base_msg->data.has_purpose_filter = true;
+			}
+			else if (db.config->purpose_filtering && db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
+			{
+				log__printf(NULL, MOSQ_LOG_INFO,
+					"Purpose filter not specified by publication from %s, rejecting.",
+					context->id);
+					db__msg_store_free(base_msg);
+					return MOSQ_ERR_MALFORMED_PACKET;
+			}
 		}
-		else if (db.config->purpose_filtering && db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
+		else if(db.config->purpose_filter_method == MOSQ_PF_NONE)
 		{
-			log__printf(NULL, MOSQ_LOG_INFO,
-				"Purpose filter not specified by publication from %s, rejecting.",
-				context->id);
-				db__msg_store_free(base_msg);
-				return MOSQ_ERR_MALFORMED_PACKET;
+			base_msg->data.has_purpose_filter = false;
 		}
-	}
-	else if(db.config->purpose_filter_method == MOSQ_PF_NONE)
-	{
-		base_msg->data.has_purpose_filter = false;
 	}
 
 	base_msg->data.payloadlen = context->in_packet.remaining_length - context->in_packet.pos;
