@@ -6,6 +6,7 @@
 /* Forward-declare mosquitto struct if needed. */
 struct mosquitto;
 struct subscriber_list;  
+struct mosquitto_base_msg;  
 struct subscription_list;
 
 /* A function to lookup a client context by ID and a function to check if a subscriber is online. */
@@ -13,14 +14,13 @@ struct mosquitto *broker_find_context_by_id(const char *client_id);
 bool is_sub_online(const char *sub_id);
 
 /* Removes Will or retained messages if "PF-RemoveStoredMessages" is set. */
-void handle_remove_stored_messages(const char *publisher_id, const char *remove_stored);
+void handle_remove_stored_messages(const char *publisher_id, const char* topic);
 
 /* Responses back to a publisher on RNP/<publisher_id>. */
-void broker_send_response_status(const char *publisher_id, const char *corr_data, const char *payload);
-void broker_send_response_data(const char *publisher_id, const char *corr_data, const char *payload);
-void broker_send_response_pending(const char *publisher_id, const char *corr_data,
-    struct subscriber_list *offline, int deadline_sec);
-void broker_send_response_failure(const char *publisher_id, const char *corr_data, const char *reason);
+void broker_send_response_success(const char *publisher_id, const char *corr_data, const char *payload);
+void broker_send_response_pending(const char *publisher_id, const char *corr_data, int deadline_sec);
+void broker_send_response_failure(const char *publisher_id, const char *corr_data, const char *reason,
+    struct subscriber_list *unreached_subs);
 
 /* For enumerating who got the publisher's data (C1). */
 struct subscription_list *find_subscriptions_for_publisher(const char *publisher_id);
@@ -29,8 +29,7 @@ struct subscription_list *find_subscriptions_for_publisher(const char *publisher
 struct subscriber_list *find_subscribers_with_data(const char *publisher_id, const char *data_filter);
 
 /* Forward a right request to RRS/<sub_id> if online, else add to an offline list. */
-struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub_list,
-    const char *corr_data, const char *invoked_right, const char *data_filter);
+struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub_list, struct mosquitto_base_msg *msg_data);
 
 /* Data structures for returning lists of subscribers. */
 typedef struct subscription_list {

@@ -5,10 +5,12 @@
 
 
 struct dr_entry *dr_head = NULL;
+struct dr_retained_entry *dr_retained_head = NULL;
 
 void dr_registry_init(void)
 {
     dr_head = NULL;
+    dr_retained_head = NULL;
 }
 
 void dr_registry_cleanup(void)
@@ -24,6 +26,15 @@ void dr_registry_cleanup(void)
             mosquitto_FREE(s->sub_id);
             mosquitto_FREE(s);
         }
+        mosquitto_FREE(e);
+    }
+
+    while(dr_retained_head)
+    {
+        struct dr_retained_entry *e = dr_retained_head;
+        dr_retained_head = dr_retained_head->next;
+        mosquitto_FREE(e->pub_id);
+        mosquitto_FREE(e->topic);
         mosquitto_FREE(e);
     }
 }
@@ -89,6 +100,40 @@ struct dr_sublist *dr__get_recipients(const char *pub_id, const char *topic)
         }
         cur = cur->next;
     }
+    return NULL;
+}
+
+void dr__record_retained_publisher(const char* pub_id, const char * topic)
+{
+    struct dr_retained_entry *cur = dr_retained_head;
+    while(cur){
+        if(!strcmp(cur->topic, topic)){
+            mosquitto_FREE(cur->pub_id);
+            cur->pub_id = mosquitto_strdup(pub_id);
+            return;
+        }
+        cur = cur->next;
+    }
+
+    struct dr_retained_entry *e = mosquitto_calloc(1, sizeof(*e));
+    if(!e) return;
+    e->pub_id = mosquitto_strdup(pub_id);
+    e->topic  = mosquitto_strdup(topic);
+    e->next = dr_retained_head;
+    dr_retained_head = e;
+    return;
+}
+
+char* dr__get_sender_of_retained_msg(const char *topic)
+{
+    struct dr_retained_entry *cur = dr_retained_head;
+    while(cur){
+        if(!strcmp(cur->topic, topic)){
+            return cur->pub_id;
+        }
+        cur = cur->next;
+    }
+
     return NULL;
 }
 

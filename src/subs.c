@@ -57,6 +57,8 @@ Contributors:
 #include "mosquitto/mqtt_protocol.h"
 #include "util_mosq.h"
 #include "dr_registry.h" 
+#include "ri_registry.h"
+#include "rights_broker.h" 
 #include "purpose_filters.h"
 #include "utlist.h"
 
@@ -213,10 +215,30 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 					}
 				}
 			}
+
+			if(db.config->metadata_operation_handling)
+			{
+				/* If this is the first time a publisher has sent data, to a subscriber
+				they need to trigger right to be informed */
+				if(!ri__has_sent_to_pub(source_id, leaf->context->id))
+				{
+					const char *info = ri__lookup_info(leaf->context->id);
+
+					if(info){
+						broker_send_response_success(source_id, NULL, info);
+						ri__mark_sent_to_pub(source_id, leaf->context->id);
+					}
+				}
+			}
 		}
 
 		rc2 = subs__send(leaf, topic, qos, retain, stored);
-		dr__record_recipient(stored->data.source_id, topic, leaf->context->id);
+
+		if(db.config->use_protection_framework && db.config->metadata_operation_handling)
+		{
+			dr__record_recipient(stored->data.source_id, topic, leaf->context->id);
+		}
+
 		if(rc2){
 			rc = 1;
 		}

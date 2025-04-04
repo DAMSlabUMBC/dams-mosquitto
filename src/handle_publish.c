@@ -443,8 +443,7 @@ int handle__publish(struct mosquitto *context)
 				bool found_op = false;
 				char *op_id = NULL;
 				char *op_info = NULL; 
-				uint32_t op_deadline = 0; 
-				
+				char *correlation_data = NULL;
 
 				/* Look through the user properties for PF-Right */
 				const mosquitto_property *p = properties;
@@ -460,13 +459,76 @@ int handle__publish(struct mosquitto *context)
 								op_id  = mosquitto_strdup(value);
 							} else if(!strcmp(name, MOSQ_PF_OP_INFO_KEY)){
 								op_info = mosquitto_strdup(value);
-							} else if(!strcmp(name, MOSQ_PF_DEADLINE_KEY)){
-								op_deadline = (uint32_t)atoi(value);
 							}
 						}
 					}
+					else if (p->identifier == MQTT_PROP_CORRELATION_DATA)
+					{
+						mosquitto_property_read_string(p, MQTT_PROP_CORRELATION_DATA, &correlation_data, false);
+					}
+
 					/* Move to next property. */
 					p = p->next;
+				}
+
+				if(found_op)
+				{
+					
+					if(!strncmp(base_msg->data.topic, MOSQ_PF_TOPIC_OSYS, 5))
+					{
+						/* handle RSYS */   
+						// The below line is auditing, later addition
+						//rr_store_request(context->id, correlation_data, op_id, op_info);
+
+						/* C1 Operations */
+						if(!strcmp(op_id, "be_informed"))
+						{
+							subscription_list *subs = find_subscriptions_for_publisher(context->id);
+							while(subs){
+								const char *info = ri__lookup_info(subs->subscriber_id);
+								if(info){
+									broker_send_response_success(context->id, correlation_data, info);
+									ri__mark_sent_to_pub(context->id, subs->subscriber_id);
+								}
+								subs = subs->next;
+							}
+						}
+
+						/* C1 Registration Operations */
+						else if(!strcmp(op_id, "be_informed-Reg"))
+						{
+							ri__register_info(context->id, base_msg->data.payload);
+						}						
+
+						/* C2/C3 Operations */
+						else if (!strcmp(op_id, "access") || !strcmp(op_id, "data_portability") ||!strcmp(op_info, "rectification") 
+						|| !strcmp(op_info, "erasure") || !strcmp(op_info, "restriction")   || !strcmp(op_info, "object") 
+						|| !strcmp(op_info, "no_autodecisions"))
+						{
+                        	/* Foward requests only to subs that have data */
+							subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
+							subscriber_list *offline = forward_request_to_connected(sub_list, &base_msg->data);
+							if(offline){
+								broker_send_response_failure(context->id, correlation_data, "Subscriber not connected", offline);
+							}
+							else
+							{
+								broker_send_response_success(context->id, correlation_data, NULL);
+							}
+
+							/* Erasure has an extra consideration */
+							if(!strcmp(op_info, "erasure"))
+							{
+								handle_remove_stored_messages(context->id, base_msg->data.topic);
+							}
+						}
+
+						else
+						{
+							/* Unrecognized right. */
+							broker_send_response_failure(context->id, correlation_data, "Unknown right", NULL);
+						}
+					}
 				}
 			}
 		}
@@ -861,6 +923,11 @@ int handle__publish(struct mosquitto *context)
 				rc = 1;
 			}
 			break;
+	}
+
+	if(base_msg->data.retain)
+	{
+		dr__record_retained_publisher(context->id, base_msg->data.topic);
 	}
 
 	db__message_write_queued_in(context);

@@ -138,6 +138,7 @@ enum mosq_transport_t {
 #define MOSQ_PF_TOPIC_ONP "ONP"  
 #define MOSQ_PF_OP_PURPOSE "PF_op"    
 #define MOSQ_PF_MAX_FILTERS_PER_SUB 100
+#define MOSQ_PF_WAIT_SECS_FOR_UNREACHED_CLIENTS 0
 
 /* Need to remove these */
 #define MOSQ_PF_RIGHT_KEY "PF-Right"
