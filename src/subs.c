@@ -131,6 +131,7 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 	int rc = 0;
 	int rc2;
 	struct mosquitto__subleaf *leaf;
+	bool record = true;
 
 	rc = subs__shared_process(hier, topic, qos, retain, stored);
 
@@ -146,6 +147,17 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 		{
 			if(db.config->purpose_filtering)
 			{
+				if(!stored->data.has_purpose_filter)
+				{
+					leaf = leaf->next;
+					continue;
+				}
+
+				if(!strcmp(stored->data.purpose_filter, MOSQ_PF_OP_PURPOSE))
+				{
+					record = false;
+				}
+
 				bool allow_all_purposes = ((strcmp(stored->data.purpose_filter, "*") == 0));
 
 				/* (1) Per Message Filtering and (2) Message Registration */
@@ -225,16 +237,15 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 					const char *info = ri__lookup_info(leaf->context->id);
 
 					if(info){
-						broker_send_response_success(source_id, NULL, info);
+						broker_send_response_success(source_id, MOSQ_PF_RIGHT_INFORMED, NULL, info, NULL);
 						ri__mark_sent_to_pub(source_id, leaf->context->id);
 					}
 				}
 			}
 		}
-
 		rc2 = subs__send(leaf, topic, qos, retain, stored);
 
-		if(db.config->use_protection_framework && db.config->metadata_operation_handling)
+		if(db.config->use_protection_framework && db.config->metadata_operation_handling && record)
 		{
 			dr__record_recipient(stored->data.source_id, topic, leaf->context->id);
 		}

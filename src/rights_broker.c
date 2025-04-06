@@ -22,7 +22,7 @@ bool is_sub_online(const char *sub_id)
 }
 
 /* Removes Wills or retained messages invoking erasure. */
-void handle_remove_stored_messages(const char *publisher_id, const char* topic)
+void handle_remove_stored_messages(const char *publisher_id)
 {
     /* Remove will message for publisher*/
     struct mosquitto *pub_ctx = broker_find_context_by_id(publisher_id);
@@ -33,22 +33,35 @@ void handle_remove_stored_messages(const char *publisher_id, const char* topic)
         pub_ctx->will = NULL;
     }
 
-    char* last_pub_on_topic_id = dr__get_sender_of_retained_msg(topic);
-
-    if(last_pub_on_topic_id && !strcmp(last_pub_on_topic_id, publisher_id))
-    {
-        mosquitto_persist_retain_msg_delete(topic);
+    /* Remove retained message for publisher */
+    extern struct dr_retained_entry *dr_retained_head;
+    struct dr_retained_entry *cur = dr_retained_head;
+    while(cur){
+        if(!strcmp(cur->pub_id, publisher_id)){
+            log__printf(NULL, MOSQ_LOG_INFO,
+                "DELETING ON %s", cur->topic);
+            mosquitto_persist_retain_msg_delete(cur->topic);
+        }
+        cur = cur->next;
     }
 }
 
 /* Sends a basic status response to RNP/<publisher_id>. */
-void broker_send_response_success(const char *publisher_id, const char *corr_data, const char *payload)
+void broker_send_response_success(const char *publisher_id, const char *operation, const char *corr_data, const char *payload, char* response_topic)
 {
     if(!publisher_id) return;
-    char onp_topic[256];
-    snprintf(onp_topic, sizeof(onp_topic), "%s/%s", MOSQ_PF_TOPIC_ONP, publisher_id);
+
+    if (response_topic == NULL)
+    {
+        char onp_topic[256];
+        snprintf(onp_topic, sizeof(onp_topic), "%s/%s", MOSQ_PF_TOPIC_ONP, publisher_id);
+        response_topic = onp_topic;
+    }
 
     mosquitto_property *props = NULL;
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_PF_OP_KEY, mosquitto_strdup(operation));
+
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
         MOSQ_PF_STATUS_KEY, "Success");
 
@@ -61,24 +74,27 @@ void broker_send_response_success(const char *publisher_id, const char *corr_dat
 
     if(payload)
     {
-        db__messages_easy_queue(NULL, onp_topic, 0, strlen(payload), payload, false, 0, &props);
+        db__messages_easy_queue_with_purpose(NULL, response_topic, MOSQ_PF_OP_PURPOSE, 0, strlen(payload), payload, false, 0, &props);
     }
     else
     {
-        db__messages_easy_queue(NULL, onp_topic, 0, 0, NULL, false, 0, &props);
+        db__messages_easy_queue_with_purpose(NULL, response_topic, MOSQ_PF_OP_PURPOSE, 0, 0, NULL, false, 0, &props);
     }
 
     mosquitto_property_free_all(&props);
 }
 
 /* Notifies publisher of offline subs, setting PF-Deadline & PF-SubscribersToContact. */
-void broker_send_response_pending(const char *publisher_id, const char *corr_data, int deadline_sec)
+void broker_send_response_pending(const char *publisher_id, const char *operation, const char *corr_data, int deadline_sec)
 {
     if(!publisher_id) return;
     char onp_topic[256];
     snprintf(onp_topic, sizeof(onp_topic), "%s/%s", MOSQ_PF_TOPIC_ONP, publisher_id);
 
     mosquitto_property *props = NULL;
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_PF_OP_KEY, mosquitto_strdup(operation));
+
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
         MOSQ_PF_STATUS_KEY, "Pending");
 
@@ -94,12 +110,12 @@ void broker_send_response_pending(const char *publisher_id, const char *corr_dat
         mosquitto_property_add_string(&props, MQTT_PROP_CORRELATION_DATA, corr_data);
     }
 
-    db__messages_easy_queue(NULL, onp_topic, 0, 0, NULL, false, 0, &props);
+    db__messages_easy_queue_with_purpose(NULL, onp_topic, MOSQ_PF_OP_PURPOSE, 0, 0, NULL, false, 0, &props);
     mosquitto_property_free_all(&props);
 }
 
 /* Sends a final failure to RNP/<publisher_id> (e.g. unknown right or offline never reconnected). */
-void broker_send_response_failure(const char *publisher_id, const char *corr_data, const char *reason,
+void broker_send_response_failure(const char *publisher_id, const char *operation, const char *corr_data, const char *reason,
     struct subscriber_list *unreached_subs)
 {
     if(!publisher_id) return;
@@ -107,6 +123,9 @@ void broker_send_response_failure(const char *publisher_id, const char *corr_dat
     snprintf(onp_topic, sizeof(onp_topic), "%s/%s", MOSQ_PF_TOPIC_ONP, publisher_id);
 
     mosquitto_property *props = NULL;
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_PF_OP_KEY, mosquitto_strdup(operation));
+
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
         MOSQ_PF_STATUS_KEY, "Failure");
 
@@ -132,7 +151,7 @@ void broker_send_response_failure(const char *publisher_id, const char *corr_dat
             MOSQ_PF_UNREACHED_CLIENTS_KEY, contact_buf);
     }
 
-    db__messages_easy_queue(NULL, onp_topic, 0, 0, NULL, false, 0, &props);
+    db__messages_easy_queue_with_purpose(NULL, onp_topic, MOSQ_PF_OP_PURPOSE, 0, 0, NULL, false, 0, &props);
     mosquitto_property_free_all(&props);
 }
 
@@ -188,15 +207,24 @@ struct subscriber_list *find_subscribers_with_data(const char *publisher_id, con
 }
 
 /* Publishes a right request to RRS/<sub> if online, else collects them offline. */
-struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub_list, struct mosquitto_base_msg *msg_data)
+struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub_list, struct mosquitto_base_msg *msg_data, char* response_topic)
 {
     struct subscriber_list *offline_head = NULL;
 
     while(sub_list){
+        log__printf(NULL, MOSQ_LOG_DEBUG,
+            "Checking %s, ", sub_list->sub_id);
+
         if(is_sub_online(sub_list->sub_id)){
-            char ors_topic[256];
-            snprintf(ors_topic, sizeof(ors_topic), "%s/%s", MOSQ_PF_TOPIC_ORS, sub_list->sub_id);
-            db__messages_easy_queue(NULL, ors_topic, msg_data->qos, msg_data->payloadlen, msg_data->payload, msg_data->retain, msg_data->expiry_time, &msg_data->properties);
+
+            if (response_topic == NULL)
+            {
+                char ors_topic[256];
+                snprintf(ors_topic, sizeof(ors_topic), "%s/%s", MOSQ_PF_TOPIC_ORS, sub_list->sub_id);
+                response_topic = ors_topic;
+            }
+
+            db__messages_easy_queue_with_purpose(NULL, response_topic, MOSQ_PF_OP_PURPOSE, msg_data->qos, msg_data->payloadlen, msg_data->payload, msg_data->retain, msg_data->expiry_time, &msg_data->properties);
         } else {
             struct subscriber_list *off = mosquitto_calloc(1, sizeof(*off));
             off->sub_id = mosquitto_strdup(sub_list->sub_id);

@@ -33,7 +33,6 @@ void dr__record_retained_publisher(const char *pub_id, const char *topic);
 
 /* Freed after use. */
 struct dr_sublist *dr__get_recipients(const char *pub_id, const char *topic);
-char* dr__get_sender_of_retained_msg(const char *topic);
 void dr__free_sublist(struct dr_sublist *list);
 
 #endif

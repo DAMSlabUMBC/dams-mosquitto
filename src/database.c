@@ -916,6 +916,65 @@ int db__messages_easy_queue(struct mosquitto *context, const char *topic, uint8_
 	return sub__messages_queue(source_id, base_msg->data.topic, base_msg->data.qos, base_msg->data.retain, &base_msg);
 }
 
+int db__messages_easy_queue_with_purpose(struct mosquitto *context, const char *topic, const char *purpose, uint8_t qos, uint32_t payloadlen, const void *payload, int retain, uint32_t message_expiry_interval, mosquitto_property **properties)
+{
+	struct mosquitto__base_msg *base_msg;
+	const char *source_id;
+	enum mosquitto_msg_origin origin;
+
+	if(!topic) return MOSQ_ERR_INVAL;
+
+	base_msg = mosquitto_calloc(1, sizeof(struct mosquitto__base_msg));
+	if(base_msg == NULL) return MOSQ_ERR_NOMEM;
+
+	base_msg->data.topic = mosquitto_strdup(topic);
+	if(base_msg->data.topic == NULL){
+		db__msg_store_free(base_msg);
+		return MOSQ_ERR_INVAL;
+	}
+
+	base_msg->data.has_purpose_filter = true;
+	base_msg->data.purpose_filter = mosquitto_strdup(purpose);
+
+	base_msg->data.qos = qos;
+	if(db.config->retain_available == false){
+		base_msg->data.retain = 0;
+	}else{
+		base_msg->data.retain = retain;
+	}
+
+	base_msg->data.payloadlen = payloadlen;
+	if(payloadlen > 0){
+		base_msg->data.payload = mosquitto_malloc(base_msg->data.payloadlen+1);
+		if(base_msg->data.payload == NULL){
+			db__msg_store_free(base_msg);
+			return MOSQ_ERR_NOMEM;
+		}
+		/* Ensure payload is always zero terminated, this is the reason for the extra byte above */
+		((uint8_t *)base_msg->data.payload)[base_msg->data.payloadlen] = 0;
+		memcpy(base_msg->data.payload, payload, base_msg->data.payloadlen);
+	}
+
+	if(context && context->id){
+		source_id = context->id;
+	}else{
+		source_id = "";
+	}
+	if(properties){
+		base_msg->data.properties = *properties;
+		*properties = NULL;
+	}
+
+	if(context){
+		origin = mosq_mo_client;
+	}else{
+		origin = mosq_mo_broker;
+	}
+	if(db__message_store(context, base_msg, &message_expiry_interval, origin)) return 1;
+
+	return sub__messages_queue(source_id, base_msg->data.topic, base_msg->data.qos, base_msg->data.retain, &base_msg);
+}
+
 
 #define MOSQ_UUID_EPOCH 1637168273
 

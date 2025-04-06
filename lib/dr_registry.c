@@ -124,19 +124,6 @@ void dr__record_retained_publisher(const char* pub_id, const char * topic)
     return;
 }
 
-char* dr__get_sender_of_retained_msg(const char *topic)
-{
-    struct dr_retained_entry *cur = dr_retained_head;
-    while(cur){
-        if(!strcmp(cur->topic, topic)){
-            return cur->pub_id;
-        }
-        cur = cur->next;
-    }
-
-    return NULL;
-}
-
 void dr__free_sublist(struct dr_sublist *list)
 {
     while(list){

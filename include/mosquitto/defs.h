@@ -140,22 +140,16 @@ enum mosq_transport_t {
 #define MOSQ_PF_MAX_FILTERS_PER_SUB 100
 #define MOSQ_PF_WAIT_SECS_FOR_UNREACHED_CLIENTS 0
 
-/* Need to remove these */
-#define MOSQ_PF_RIGHT_KEY "PF-Right"
-#define MOSQ_PF_RIGHT_INFO_KEY "PF-RightInfo"
-#define MOSQ_PF_GDPR_REASON_KEY "GDPR-Reason"
-#define MOSQ_PF_DATA_FILTER_KEY "PF-DataFilter"
-#define MOSQ_PF_PURPOSE_FILTER_KEY "PF-PurposeFilter"
-#define MOSQ_PF_CORRELATION_DATA_KEY "PF-CorrData"
-#define MOSQ_PF_REMOVE_STORED_KEY "PF-RemoveStoredMessages"
-#define MOSQ_PF_DATA_KEY "PF-Data"
-#define MOSQ_PF_SUBSCRIBERS_TO_CONTACT_KEY "PF-SubscribersToContactd"
-#define MOSQ_PF_TOPIC_RR "RR"     
-#define MOSQ_PF_TOPIC_RRS "RRS"    
-#define MOSQ_PF_TOPIC_RSYS "$RSYS"  
-#define MOSQ_PF_TOPIC_RN "RN"    
-#define MOSQ_PF_TOPIC_RNP "RNP"  
-
+/* Supported operations */
+#define MOSQ_PF_RIGHT_INFORMED "Informed"
+#define MOSQ_PF_RIGHT_INFORMED_REG "Informed-Reg"
+#define MOSQ_PF_RIGHT_ACCESS "Access"
+#define MOSQ_PF_RIGHT_PORTABILITY "Portability"
+#define MOSQ_PF_RIGHT_RECTIFICATION "Rectification"
+#define MOSQ_PF_RIGHT_ERASURE "Erasure"
+#define MOSQ_PF_RIGHT_RESTRICTION "Restriction"
+#define MOSQ_PF_RIGHT_OBJECT "Object"
+#define MOSQ_PF_RIGHT_AUTODECISION "AutoDecision"
 
 #define MQTT_PROTOCOL_V31 3
 #define MQTT_PROTOCOL_V311 4

@@ -57,6 +57,13 @@ int handle__publish(struct mosquitto *context)
 	uint8_t reason_code = 0;
 	uint16_t mid = 0;
 
+	// For operations
+	bool found_op = false;
+	char *op_id = NULL;
+	char *op_info = NULL; 
+	char *correlation_data = NULL;
+	char *response_topic = NULL;
+
 	bool found_purpose_filter = false;
 	char* purpose_filter = NULL;
 
@@ -437,14 +444,9 @@ int handle__publish(struct mosquitto *context)
 				}
 			}
 
+			/* Read all potential operational properties for later */
 			if(db.config->metadata_operation_handling)
 			{
-				/* Read all potential operational properties */
-				bool found_op = false;
-				char *op_id = NULL;
-				char *op_info = NULL; 
-				char *correlation_data = NULL;
-
 				/* Look through the user properties for PF-Right */
 				const mosquitto_property *p = properties;
 				while(p){
@@ -466,227 +468,16 @@ int handle__publish(struct mosquitto *context)
 					{
 						mosquitto_property_read_string(p, MQTT_PROP_CORRELATION_DATA, &correlation_data, false);
 					}
+					else if(p->identifier == MQTT_PROP_RESPONSE_TOPIC)
+					{
+						mosquitto_property_read_string(p, MQTT_PROP_RESPONSE_TOPIC, &response_topic, false);
+					}
 
 					/* Move to next property. */
 					p = p->next;
 				}
-
-				if(found_op)
-				{
-					
-					if(!strncmp(base_msg->data.topic, MOSQ_PF_TOPIC_OSYS, 5))
-					{
-						/* handle RSYS */   
-						// The below line is auditing, later addition
-						//rr_store_request(context->id, correlation_data, op_id, op_info);
-
-						/* C1 Operations */
-						if(!strcmp(op_id, "be_informed"))
-						{
-							subscription_list *subs = find_subscriptions_for_publisher(context->id);
-							while(subs){
-								const char *info = ri__lookup_info(subs->subscriber_id);
-								if(info){
-									broker_send_response_success(context->id, correlation_data, info);
-									ri__mark_sent_to_pub(context->id, subs->subscriber_id);
-								}
-								subs = subs->next;
-							}
-						}
-
-						/* C1 Registration Operations */
-						else if(!strcmp(op_id, "be_informed-Reg"))
-						{
-							ri__register_info(context->id, base_msg->data.payload);
-						}						
-
-						/* C2/C3 Operations */
-						else if (!strcmp(op_id, "access") || !strcmp(op_id, "data_portability") ||!strcmp(op_info, "rectification") 
-						|| !strcmp(op_info, "erasure") || !strcmp(op_info, "restriction")   || !strcmp(op_info, "object") 
-						|| !strcmp(op_info, "no_autodecisions"))
-						{
-                        	/* Foward requests only to subs that have data */
-							subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
-							subscriber_list *offline = forward_request_to_connected(sub_list, &base_msg->data);
-							if(offline){
-								broker_send_response_failure(context->id, correlation_data, "Subscriber not connected", offline);
-							}
-							else
-							{
-								broker_send_response_success(context->id, correlation_data, NULL);
-							}
-
-							/* Erasure has an extra consideration */
-							if(!strcmp(op_info, "erasure"))
-							{
-								handle_remove_stored_messages(context->id, base_msg->data.topic);
-							}
-						}
-
-						else
-						{
-							/* Unrecognized right. */
-							broker_send_response_failure(context->id, correlation_data, "Unknown right", NULL);
-						}
-					}
-				}
 			}
 		}
-    	
-    	// 	/* If a PF-Right was found, check the topic to see which of the five 
-     	// 	* MQTT-PF Right Invocation topics it might match.
-     	// 	*/
-    	// 	if(found_pf_right)
-    	// 	{
-        // 		const char *topic = base_msg->data.topic;
-
-		// 		/* (1) RR: Right Request */
-       	// 		if(!strncmp(topic, MOSQ_PF_TOPIC_RR, 2))
-       	// 		{
-        //    			/* handle RR */
-        //    			log__printf(NULL, MOSQ_LOG_INFO, 
-        //        			"[RR] Found right '%s' from %s, swallowing.",
-        //        			invoked_right ? invoked_right : "(null)", context->id);
-            			
-		// 			rr_store_request(context->id, correlation_data, invoked_right, data_filter);
-		// 			mosquitto_property_free_all(&properties);
-		// 			db__msg_store_free(base_msg);
-
-		// 			mosquitto_FREE(invoked_right);
-		// 			mosquitto_FREE(data_filter);
-		// 			mosquitto_FREE(remove_stored);
-		// 			mosquitto_FREE(gdpr_reason);
-		// 			mosquitto_FREE(correlation_data);
-		// 			return MOSQ_ERR_SUCCESS;
-        // 		}
-        // 		/* (2) RRS: Subscriber-Keyed Right Request */
-        // 		else if(!strncmp(topic, MOSQ_PF_TOPIC_RRS, 3))
-        // 		{
-        //    			/* handle RRS */
-        //    			log__printf(NULL, MOSQ_LOG_INFO, 
-        //        			"[RRS] Found right '%s' from %s, swallowing.",
-        //        			invoked_right ? invoked_right : "(null)", context->id);
-
-		// 			rr_store_request(context->id, correlation_data, invoked_right, data_filter);
-		// 			mosquitto_property_free_all(&properties);
-		// 			db__msg_store_free(base_msg);
-					
-		// 			mosquitto_FREE(invoked_right);
-		// 			mosquitto_FREE(data_filter);
-		// 			mosquitto_FREE(remove_stored);
-		// 			mosquitto_FREE(gdpr_reason);
-		// 			mosquitto_FREE(correlation_data);
-		// 			return MOSQ_ERR_SUCCESS;
-        // 		}
-        // 		/* (3) $RSYS: Right System topic */
-        // 		else if(!strncmp(topic, MOSQ_PF_TOPIC_RSYS, 5))
-        // 		{
-        //    			/* handle RSYS */   
-		// 			rr_store_request(context->id, correlation_data, invoked_right, data_filter);
-
-		// 			if(remove_stored){
-		// 				/* Handle "WILL" or "RETAINED:..." for erasure. */
-		// 				handle_remove_stored_messages(context->id, remove_stored);
-		// 			}
-				   
-		// 			/* Check which right is invoked. */
-		// 			if(!strcmp(invoked_right, "be_informed"))
-		// 			{
-		// 				/* C1-2: Broker sends its own info, then retrieves subscriber info. */
-		// 				broker_send_response_status(context->id, correlation_data, "Broker info");
-		// 				subscription_list *subs = find_subscriptions_for_publisher(context->id);
-		// 				while(subs){
-		// 					const char *info = ri__lookup_info(subs->subscriber_id, subs->topic);
-		// 					if(info){
-		// 						broker_send_response_data(context->id, correlation_data, info);
-		// 					}
-		// 					subs = subs->next;
-		// 				}
-		// 			}
-		// 			else if(!strcmp(invoked_right, "access") || !strcmp(invoked_right, "data_portability"))
-		// 			{
-		// 				/* C2-2: Provide broker info, forward requests only to subs that have data. */
-		// 				broker_send_response_status(context->id, correlation_data, "Broker data snippet");
-		// 				subscriber_list *sub_list = find_subscribers_with_data(context->id, data_filter);
-		// 				subscriber_list *offline = forward_request_to_connected(sub_list, correlation_data, invoked_right, data_filter);
-		// 				if(offline){
-		// 					broker_send_response_pending(context->id, correlation_data, offline, 60);
-		// 				}
-		// 			}
-		// 			else if(!strcmp(invoked_right, "rectification") || !strcmp(invoked_right, "erasure") ||
-		// 					!strcmp(invoked_right, "restriction")   || !strcmp(invoked_right, "object")   ||
-		// 					!strcmp(invoked_right, "no_autodecisions"))
-		// 			{
-		// 				/* C3-2: Broker triggers actions on data (e.g., erase, restrict). */
-		// 				broker_send_response_status(context->id, correlation_data, "Request noted");
-		// 				subscriber_list *sub_list = find_subscribers_with_data(context->id, data_filter);
-		// 				subscriber_list *offline = forward_request_to_connected(sub_list, correlation_data, invoked_right, data_filter);
-		// 				if(offline){
-		// 					broker_send_response_pending(context->id, correlation_data, offline, 60);
-		// 				}
-		// 			}
-		// 			else
-		// 			{
-		// 				/* Unrecognized right. */
-		// 				broker_send_response_failure(context->id, correlation_data, "Unknown right");
-		// 			}
-				   
-		// 			mosquitto_property_free_all(&properties);
-		// 			db__msg_store_free(base_msg);
-
-		// 			mosquitto_FREE(invoked_right);
-		// 			mosquitto_FREE(data_filter);
-		// 			mosquitto_FREE(remove_stored);
-		// 			mosquitto_FREE(gdpr_reason);
-		// 			mosquitto_FREE(correlation_data);
-		// 			return MOSQ_ERR_SUCCESS;
-       	// 		}
-       	// 		/* (4) RN: Right Notification to all publishers */
-       	// 		else if(!strncmp(topic, MOSQ_PF_TOPIC_RN, 2))
-       	// 		{
-        //    			/* handle RN */
-        //    			log__printf(NULL, MOSQ_LOG_INFO, 
-        //        			"[RN] Notification of right '%s', swallowing.",
-        //        			invoked_right ? invoked_right : "(null)");
-
-		// 			rr_store_request(context->id, correlation_data, invoked_right, data_filter);
-		// 			mosquitto_property_free_all(&properties);
-		// 			db__msg_store_free(base_msg);
-
-		// 			mosquitto_FREE(invoked_right);
-		// 			mosquitto_FREE(data_filter);
-		// 			mosquitto_FREE(remove_stored);
-		// 			mosquitto_FREE(gdpr_reason);
-		// 			mosquitto_FREE(correlation_data);
-		// 			return MOSQ_ERR_SUCCESS;
-       	// 		}
-       	// 		/* (5) RNP: Right Notification to specific publisher */
-       	// 		else if(!strncmp(topic, MOSQ_PF_TOPIC_RNP, 3))
-       	// 		{
-        //    			/* handle RNP */
-        //    			log__printf(NULL, MOSQ_LOG_INFO, 
-        //        			"[RNP] Notification of right '%s' for a specific publisher, swallowing.",
-        //        			invoked_right ? invoked_right : "(null)");
-
-		// 			rr_store_request(context->id, correlation_data, invoked_right, data_filter);
-		// 			mosquitto_property_free_all(&properties);
-		// 			db__msg_store_free(base_msg);
-
-		// 			mosquitto_FREE(invoked_right);
-		// 			mosquitto_FREE(data_filter);
-		// 			mosquitto_FREE(remove_stored);
-		// 			mosquitto_FREE(gdpr_reason);
-		// 			mosquitto_FREE(correlation_data);
-		// 			return MOSQ_ERR_SUCCESS;
-       	// 		}
-   		// 	}
-   		// 	/* If no PF-Right is found or the topic is not recognized, do normal data publish.*/
-    	// 	mosquitto_FREE(invoked_right);
-    	// 	mosquitto_FREE(data_filter);
-    	// 	mosquitto_FREE(remove_stored);
-    	// 	mosquitto_FREE(gdpr_reason);
-    	// 	mosquitto_FREE(correlation_data);
-		// 	return rc;
 
 		rc = property__process_publish(base_msg, &properties, &topic_alias, &message_expiry_interval);
 		if(rc){
@@ -885,6 +676,67 @@ int handle__publish(struct mosquitto *context)
 		dup = cmsg_stored->data.dup;
 	}
 
+	if(stored->data.retain)
+	{
+		dr__record_retained_publisher(context->id, stored->data.topic);
+	}
+
+	/* Read all potential operational properties for later */
+	if(db.config->metadata_operation_handling && found_op)
+	{
+		if(!strncmp(stored->data.topic, MOSQ_PF_TOPIC_OSYS, 5))
+		{
+			/* C1 Operations */
+			if(!strcmp(op_id, MOSQ_PF_RIGHT_INFORMED))
+			{
+				subscription_list *subs = find_subscriptions_for_publisher(context->id);
+				while(subs){
+					const char *info = ri__lookup_info(subs->subscriber_id);
+					if(info){
+						broker_send_response_success(context->id, op_id, correlation_data, info, response_topic);
+						ri__mark_sent_to_pub(context->id, subs->subscriber_id);
+					}
+					subs = subs->next;
+				}
+			}
+
+			/* C1 Registration Operations */
+			else if(!strcmp(op_id, MOSQ_PF_RIGHT_INFORMED_REG))
+			{
+				ri__register_info(context->id, stored->data.payload);
+			}						
+
+			/* C2/C3 Operations */
+			else if (!strcmp(op_id, MOSQ_PF_RIGHT_ACCESS) || !strcmp(op_id, MOSQ_PF_RIGHT_PORTABILITY) || !strcmp(op_id, MOSQ_PF_RIGHT_RECTIFICATION) 
+			|| !strcmp(op_id, MOSQ_PF_RIGHT_ERASURE) || !strcmp(op_id, MOSQ_PF_RIGHT_RESTRICTION)   || !strcmp(op_id, MOSQ_PF_RIGHT_OBJECT) 
+			|| !strcmp(op_id, MOSQ_PF_RIGHT_AUTODECISION))
+			{
+				/* Foward requests only to subs that have data */
+				subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
+				subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, response_topic);
+				if(offline){
+					broker_send_response_failure(context->id, op_id, correlation_data, "Subscriber not connected", offline);
+				}
+				else
+				{
+					broker_send_response_success(context->id, op_id, correlation_data, NULL, response_topic);
+				}
+
+				/* Erasure has an extra consideration */
+				if(!strcmp(op_id, MOSQ_PF_RIGHT_ERASURE))
+				{
+					handle_remove_stored_messages(context->id);
+				}
+			}
+
+			else
+			{
+				/* Unrecognized right. */
+				broker_send_response_failure(context->id, op_id, correlation_data, "Unknown right", NULL);
+			}
+		}
+	}
+
 	switch(stored->data.qos){
 		case 0:
 			rc2 = sub__messages_queue(context->id, stored->data.topic, stored->data.qos, stored->data.retain, &stored);
@@ -923,11 +775,6 @@ int handle__publish(struct mosquitto *context)
 				rc = 1;
 			}
 			break;
-	}
-
-	if(base_msg->data.retain)
-	{
-		dr__record_retained_publisher(context->id, base_msg->data.topic);
 	}
 
 	db__message_write_queued_in(context);
