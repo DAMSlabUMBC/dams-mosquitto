@@ -681,58 +681,61 @@ int handle__publish(struct mosquitto *context)
 		dr__record_retained_publisher(context->id, stored->data.topic);
 	}
 
-	/* Read all potential operational properties for later */
-	if(db.config->metadata_operation_handling && found_op)
+	if(db.config->use_protection_framework)
 	{
-		if(!strncmp(stored->data.topic, MOSQ_PF_TOPIC_OSYS, 5))
+		/* Read all potential operational properties for later */
+		if(db.config->metadata_operation_handling && found_op)
 		{
-			/* C1 Operations */
-			if(!strcmp(op_id, MOSQ_PF_RIGHT_INFORMED))
+			if(!strncmp(stored->data.topic, MOSQ_PF_TOPIC_OSYS, 5))
 			{
-				subscription_list *subs = find_subscriptions_for_publisher(context->id);
-				while(subs){
-					const char *info = ri__lookup_info(subs->subscriber_id);
-					if(info){
-						broker_send_response_success(context->id, op_id, correlation_data, info, response_topic);
-						ri__mark_sent_to_pub(context->id, subs->subscriber_id);
+				/* C1 Operations */
+				if(!strcmp(op_id, MOSQ_PF_RIGHT_INFORMED))
+				{
+					subscription_list *subs = find_subscriptions_for_publisher(context->id);
+					while(subs){
+						const char *info = ri__lookup_info(subs->subscriber_id);
+						if(info){
+							broker_send_response_success(context->id, op_id, correlation_data, info, response_topic);
+							ri__mark_sent_to_pub(context->id, subs->subscriber_id);
+						}
+						subs = subs->next;
 					}
-					subs = subs->next;
 				}
-			}
 
-			/* C1 Registration Operations */
-			else if(!strcmp(op_id, MOSQ_PF_RIGHT_INFORMED_REG))
-			{
-				ri__register_info(context->id, stored->data.payload);
-			}						
+				/* C1 Registration Operations */
+				else if(!strcmp(op_id, MOSQ_PF_RIGHT_INFORMED_REG))
+				{
+					ri__register_info(context->id, stored->data.payload);
+				}						
 
-			/* C2/C3 Operations */
-			else if (!strcmp(op_id, MOSQ_PF_RIGHT_ACCESS) || !strcmp(op_id, MOSQ_PF_RIGHT_PORTABILITY) || !strcmp(op_id, MOSQ_PF_RIGHT_RECTIFICATION) 
-			|| !strcmp(op_id, MOSQ_PF_RIGHT_ERASURE) || !strcmp(op_id, MOSQ_PF_RIGHT_RESTRICTION)   || !strcmp(op_id, MOSQ_PF_RIGHT_OBJECT) 
-			|| !strcmp(op_id, MOSQ_PF_RIGHT_AUTODECISION))
-			{
-				/* Foward requests only to subs that have data */
-				subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
-				subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, response_topic);
-				if(offline){
-					broker_send_response_failure(context->id, op_id, correlation_data, "Subscriber not connected", offline);
+				/* C2/C3 Operations */
+				else if (!strcmp(op_id, MOSQ_PF_RIGHT_ACCESS) || !strcmp(op_id, MOSQ_PF_RIGHT_PORTABILITY) || !strcmp(op_id, MOSQ_PF_RIGHT_RECTIFICATION) 
+				|| !strcmp(op_id, MOSQ_PF_RIGHT_ERASURE) || !strcmp(op_id, MOSQ_PF_RIGHT_RESTRICTION)   || !strcmp(op_id, MOSQ_PF_RIGHT_OBJECT) 
+				|| !strcmp(op_id, MOSQ_PF_RIGHT_AUTODECISION))
+				{
+					/* Foward requests only to subs that have data */
+					subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
+					subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, response_topic);
+					if(offline){
+						broker_send_response_failure(context->id, op_id, correlation_data, "Subscriber not connected", offline);
+					}
+					else
+					{
+						broker_send_response_success(context->id, op_id, correlation_data, NULL, response_topic);
+					}
+
+					/* Erasure has an extra consideration */
+					if(!strcmp(op_id, MOSQ_PF_RIGHT_ERASURE))
+					{
+						handle_remove_stored_messages(context->id);
+					}
 				}
+
 				else
 				{
-					broker_send_response_success(context->id, op_id, correlation_data, NULL, response_topic);
+					/* Unrecognized right. */
+					broker_send_response_failure(context->id, op_id, correlation_data, "Unknown right", NULL);
 				}
-
-				/* Erasure has an extra consideration */
-				if(!strcmp(op_id, MOSQ_PF_RIGHT_ERASURE))
-				{
-					handle_remove_stored_messages(context->id);
-				}
-			}
-
-			else
-			{
-				/* Unrecognized right. */
-				broker_send_response_failure(context->id, op_id, correlation_data, "Unknown right", NULL);
 			}
 		}
 	}
