@@ -51,7 +51,7 @@ int handle__subscribe(struct mosquitto *context)
 	uint32_t subscription_identifier = 0;
 	/* Purpose filtering (MQTT v5 only) */
 	uint32_t purpose_filter_count = 0;
-	char* purpose_filters[MOSQ_PF_MAX_FILTERS_PER_SUB];
+	char* purpose_filters[MOSQ_DAP_MAX_FILTERS_PER_SUB];
 
 	if(!context) return MOSQ_ERR_INVAL;
 
@@ -97,7 +97,7 @@ int handle__subscribe(struct mosquitto *context)
 
 		/* Check for purpose filtering which requires registration at subscribe-time by the subscriber */
 		if(db.config->purpose_filtering 
-			&& (db.config->purpose_filter_method == MOSQ_PF_PER_MSG || db.config->purpose_filter_method == MOSQ_PF_MSG_REG))
+			&& (db.config->purpose_filter_method == MOSQ_DAP_PER_MSG || db.config->purpose_filter_method == MOSQ_DAP_MSG_REG))
 		{
 			// Since there can be multiple user properties, loop through entire list
 			const mosquitto_property* curr_prop_ptr = properties;
@@ -112,7 +112,7 @@ int handle__subscribe(struct mosquitto *context)
 				if(curr_prop_ptr)
 				{
 					/* Check if this is a purpose filtering property and assign if so */
-					if(!strcmp(name, MOSQ_PF_SP_KEY))
+					if(!strcmp(name, MOSQ_DAP_SP_KEY))
 					{
 						/* Parse all purposes this filter describes */
 						uint32_t num_results = 0;
@@ -138,7 +138,7 @@ int handle__subscribe(struct mosquitto *context)
 							}
 
 							/* Verify we haven't exceeded the maximum */
-							if(purpose_filter_count == MOSQ_PF_MAX_FILTERS_PER_SUB)
+							if(purpose_filter_count == MOSQ_DAP_MAX_FILTERS_PER_SUB)
 							{
 								log__printf(NULL, MOSQ_LOG_INFO,
 									"Too many purpose filters from %s, disconnecting.",

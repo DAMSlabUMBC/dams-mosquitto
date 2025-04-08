@@ -321,7 +321,7 @@ static void config__init_reload(struct mosquitto__config *config)
 	config->packet_buffer_size = 4096;
 	config->use_protection_framework = false;
 	config->purpose_filtering = false;
-	config->purpose_filter_method = MOSQ_PF_NONE;
+	config->purpose_filter_method = MOSQ_DAP_NONE;
 	config->metadata_operation_handling = false;
 }
 
@@ -2497,7 +2497,7 @@ static int config__read_file_core(struct mosquitto__config *config, bool reload,
 #endif
 				}else if(!strcmp(token, "purpose_filtering_method")){
 					if(conf__parse_int(&token, token, &tmp_int, &saveptr)) return MOSQ_ERR_INVAL;
-					if(tmp_int < MOSQ_PF_NONE || tmp_int > MOSQ_PF_TOPIC_REG){
+					if(tmp_int < MOSQ_DAP_NONE || tmp_int > MOSQ_DAP_TOPIC_REG){
 						log__printf(NULL, MOSQ_LOG_WARNING, "Error: Invalid method provided for purpose filtering.");
 						return MOSQ_ERR_INVAL;
 					}

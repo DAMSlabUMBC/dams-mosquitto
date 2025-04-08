@@ -152,7 +152,7 @@ int handle__publish(struct mosquitto *context)
 				if(curr_prop_ptr)
 				{
 					/* Check if this is the consent property */
-					if(!strcmp(name, MOSQ_PF_CONSENT_KEY))
+					if(!strcmp(name, MOSQ_DAP_CONSENT_KEY))
 					{
 						/* If value is "1", consent given, keep processing. Otherwise reject */
 						if(!strcmp(value, "1"))
@@ -187,7 +187,7 @@ int handle__publish(struct mosquitto *context)
 			if(db.config->purpose_filtering)
 			{
 				/* (1) Per-Message Declaration */
-				if(db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
+				if(db.config->purpose_filter_method == MOSQ_DAP_PER_MSG)
 				{
 					/* Since there can be multiple user properties, loop through them */
 					const mosquitto_property *curr_prop_ptr = properties;
@@ -198,8 +198,8 @@ int handle__publish(struct mosquitto *context)
 						curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false );
 						if(curr_prop_ptr)
 						{
-							/* Check if this is a PF-MP property */
-							if(!strcmp(name, MOSQ_PF_MP_KEY))
+							/* Check if this is a DAP-MP property */
+							if(!strcmp(name, MOSQ_DAP_MP_KEY))
 							{
 								/* Message cannot have multiple purpose filters */
 								if(found_purpose_filter)
@@ -228,10 +228,10 @@ int handle__publish(struct mosquitto *context)
 					}
 				}
 				/* (2) Registration by Message */
-				else if(db.config->purpose_filter_method == MOSQ_PF_MSG_REG)
+				else if(db.config->purpose_filter_method == MOSQ_DAP_MSG_REG)
 				{
 					/* Check if this is a registration message on $PF/purpose_management */
-					if(!strcmp(base_msg->data.topic, MOSQ_PF_PM_TOPIC))
+					if(!strcmp(base_msg->data.topic, MOSQ_DAP_PM_TOPIC))
 					{
 						/* Since there can be multiple user properties, loop through them */
 						const mosquitto_property *curr_prop_ptr = properties;
@@ -242,8 +242,8 @@ int handle__publish(struct mosquitto *context)
 							curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false );
 							if(curr_prop_ptr)
 							{
-								/* Check if this is a PF-MP property */
-								if(!strcmp(name, MOSQ_PF_MP_KEY))
+								/* Check if this is a DAP-MP property */
+								if(!strcmp(name, MOSQ_DAP_MP_KEY))
 								{
 									char *temp, *filter, *topic = NULL;
 
@@ -303,13 +303,13 @@ int handle__publish(struct mosquitto *context)
 					}
 				}
 				/* (3) Registration by Topic */
-				else if(db.config->purpose_filter_method == MOSQ_PF_TOPIC_REG)
+				else if(db.config->purpose_filter_method == MOSQ_DAP_TOPIC_REG)
 				{
 					/* Check if this is a registration topic starting with $PF/MP_reg/ */
-					if(strlen(base_msg->data.topic) >= strlen(MOSQ_PF_MP_REG_TOPIC) && !strncmp(base_msg->data.topic, MOSQ_PF_MP_REG_TOPIC, strlen(MOSQ_PF_MP_REG_TOPIC)))
+					if(strlen(base_msg->data.topic) >= strlen(MOSQ_DAP_MP_REG_TOPIC) && !strncmp(base_msg->data.topic, MOSQ_DAP_MP_REG_TOPIC, strlen(MOSQ_DAP_MP_REG_TOPIC)))
 					{
 						/* Parse out real_topic and mp_value from the bracketed suffix */
-						const char *rest = base_msg->data.topic + strlen(MOSQ_PF_MP_REG_TOPIC);
+						const char *rest = base_msg->data.topic + strlen(MOSQ_DAP_MP_REG_TOPIC);
 						char rt[256] = {0}, mp[256] = {0};
 		
 						const char *b = strchr(rest, '[');
@@ -338,10 +338,10 @@ int handle__publish(struct mosquitto *context)
 						return MOSQ_ERR_SUCCESS;
 					}
 					/* Check if the subscription topic begins with "$PF/SP_reg/" */
-					else if(strlen(base_msg->data.topic) >= strlen(MOSQ_PF_SP_REG_TOPIC) && !strncmp(base_msg->data.topic, MOSQ_PF_SP_REG_TOPIC, strlen(MOSQ_PF_SP_REG_TOPIC)))
+					else if(strlen(base_msg->data.topic) >= strlen(MOSQ_DAP_SP_REG_TOPIC) && !strncmp(base_msg->data.topic, MOSQ_DAP_SP_REG_TOPIC, strlen(MOSQ_DAP_SP_REG_TOPIC)))
 					{
 						/*  Parse the special subscription topic of the form */
-						const char *rest = base_msg->data.topic + strlen(MOSQ_PF_SP_REG_TOPIC);
+						const char *rest = base_msg->data.topic + strlen(MOSQ_DAP_SP_REG_TOPIC);
 
 						/* SP can contain replacement terms for wildcards */
 						char* curr_string = malloc(strlen(rest) + 1);
@@ -447,7 +447,7 @@ int handle__publish(struct mosquitto *context)
 			/* Read all potential operational properties for later */
 			if(db.config->metadata_operation_handling)
 			{
-				/* Look through the user properties for PF-Right */
+				/* Look through the user properties for DAP-Operation */
 				const mosquitto_property *p = properties;
 				while(p){
 					if(p->identifier == MQTT_PROP_USER_PROPERTY){
@@ -455,11 +455,11 @@ int handle__publish(struct mosquitto *context)
 						mosquitto_property_read_string_pair(p, MQTT_PROP_USER_PROPERTY, &name, &value, false);
 
 						if(name && value){
-							/* If we find PF-Right then note it. */
-							if(!strcmp(name, MOSQ_PF_OP_KEY)){
+							/* If we find DAP-Operation then note it. */
+							if(!strcmp(name, MOSQ_DAP_OP_KEY)){
 								found_op = true;
 								op_id  = mosquitto_strdup(value);
-							} else if(!strcmp(name, MOSQ_PF_OP_INFO_KEY)){
+							} else if(!strcmp(name, MOSQ_DAP_OP_INFO_KEY)){
 								op_info = mosquitto_strdup(value);
 							}
 						}
@@ -523,15 +523,15 @@ int handle__publish(struct mosquitto *context)
 
 	if(db.config->use_protection_framework && db.config->purpose_filtering)
 	{
-		/* Purpose filter must exist if filtering type is MOSQ_PF_PER_MSG */
-		if(db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
+		/* Purpose filter must exist if filtering type is MOSQ_DAP_PER_MSG */
+		if(db.config->purpose_filter_method == MOSQ_DAP_PER_MSG)
 		{
 			if(found_purpose_filter)
 			{
 				base_msg->data.purpose_filter = purpose_filter;
 				base_msg->data.has_purpose_filter = true;
 			}
-			else if (db.config->purpose_filtering && db.config->purpose_filter_method == MOSQ_PF_PER_MSG)
+			else if (db.config->purpose_filtering && db.config->purpose_filter_method == MOSQ_DAP_PER_MSG)
 			{
 				log__printf(NULL, MOSQ_LOG_INFO,
 					"Purpose filter not specified by publication from %s, rejecting.",
@@ -540,7 +540,7 @@ int handle__publish(struct mosquitto *context)
 					return MOSQ_ERR_MALFORMED_PACKET;
 			}
 		}
-		else if(db.config->purpose_filter_method == MOSQ_PF_NONE)
+		else if(db.config->purpose_filter_method == MOSQ_DAP_NONE)
 		{
 			base_msg->data.has_purpose_filter = false;
 		}
@@ -686,10 +686,10 @@ int handle__publish(struct mosquitto *context)
 		/* Read all potential operational properties for later */
 		if(db.config->metadata_operation_handling && found_op)
 		{
-			if(!strncmp(stored->data.topic, MOSQ_PF_TOPIC_OSYS, 5))
+			if(!strncmp(stored->data.topic, MOSQ_DAP_TOPIC_OSYS, 5))
 			{
 				/* C1 Operations */
-				if(!strcmp(op_id, MOSQ_PF_RIGHT_INFORMED))
+				if(!strcmp(op_id, MOSQ_DAP_RIGHT_INFORMED))
 				{
 					subscription_list *subs = find_subscriptions_for_publisher(context->id);
 					while(subs){
@@ -703,15 +703,15 @@ int handle__publish(struct mosquitto *context)
 				}
 
 				/* C1 Registration Operations */
-				else if(!strcmp(op_id, MOSQ_PF_RIGHT_INFORMED_REG))
+				else if(!strcmp(op_id, MOSQ_DAP_RIGHT_INFORMED_REG))
 				{
 					ri__register_info(context->id, stored->data.payload);
 				}						
 
 				/* C2/C3 Operations */
-				else if (!strcmp(op_id, MOSQ_PF_RIGHT_ACCESS) || !strcmp(op_id, MOSQ_PF_RIGHT_PORTABILITY) || !strcmp(op_id, MOSQ_PF_RIGHT_RECTIFICATION) 
-				|| !strcmp(op_id, MOSQ_PF_RIGHT_ERASURE) || !strcmp(op_id, MOSQ_PF_RIGHT_RESTRICTION)   || !strcmp(op_id, MOSQ_PF_RIGHT_OBJECT) 
-				|| !strcmp(op_id, MOSQ_PF_RIGHT_AUTODECISION))
+				else if (!strcmp(op_id, MOSQ_DAP_RIGHT_ACCESS) || !strcmp(op_id, MOSQ_DAP_RIGHT_PORTABILITY) || !strcmp(op_id, MOSQ_DAP_RIGHT_RECTIFICATION) 
+				|| !strcmp(op_id, MOSQ_DAP_RIGHT_ERASURE) || !strcmp(op_id, MOSQ_DAP_RIGHT_RESTRICTION)   || !strcmp(op_id, MOSQ_DAP_RIGHT_OBJECT) 
+				|| !strcmp(op_id, MOSQ_DAP_RIGHT_AUTODECISION))
 				{
 					/* Foward requests only to subs that have data */
 					subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
@@ -725,7 +725,7 @@ int handle__publish(struct mosquitto *context)
 					}
 
 					/* Erasure has an extra consideration */
-					if(!strcmp(op_id, MOSQ_PF_RIGHT_ERASURE))
+					if(!strcmp(op_id, MOSQ_DAP_RIGHT_ERASURE))
 					{
 						handle_remove_stored_messages(context->id);
 					}

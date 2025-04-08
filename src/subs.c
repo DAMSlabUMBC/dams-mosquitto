@@ -153,7 +153,7 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 					continue;
 				}
 
-				if(!strcmp(stored->data.purpose_filter, MOSQ_PF_OP_PURPOSE))
+				if(!strcmp(stored->data.purpose_filter, MOSQ_DAP_OP_PURPOSE))
 				{
 					record = false;
 				}
@@ -161,7 +161,7 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 				bool allow_all_purposes = ((strcmp(stored->data.purpose_filter, "*") == 0));
 
 				/* (1) Per Message Filtering and (2) Message Registration */
-				if(db.config->purpose_filter_method == MOSQ_PF_PER_MSG || db.config->purpose_filter_method == MOSQ_PF_MSG_REG)
+				if(db.config->purpose_filter_method == MOSQ_DAP_PER_MSG || db.config->purpose_filter_method == MOSQ_DAP_MSG_REG)
 				{
 					if(!allow_all_purposes)
 					{
@@ -192,7 +192,7 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 				}
 
 				/* (3) Topic Registration */
-				else if (db.config->purpose_filter_method == MOSQ_PF_TOPIC_REG)
+				else if (db.config->purpose_filter_method == MOSQ_DAP_TOPIC_REG)
 				{
 					/* There needs to be a registered SP for this topic */
 					char *registered_sp = sp__lookup_topic(leaf->context->id, leaf->topic_filter);
@@ -237,7 +237,7 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 					const char *info = ri__lookup_info(leaf->context->id);
 
 					if(info){
-						broker_send_response_success(source_id, MOSQ_PF_RIGHT_INFORMED, NULL, info, NULL);
+						broker_send_response_success(source_id, MOSQ_DAP_RIGHT_INFORMED, NULL, info, NULL);
 						ri__mark_sent_to_pub(source_id, leaf->context->id);
 					}
 				}

@@ -13,7 +13,7 @@ struct subscription_list;
 struct mosquitto *broker_find_context_by_id(const char *client_id);
 bool is_sub_online(const char *sub_id);
 
-/* Removes Will or retained messages if "PF-RemoveStoredMessages" is set. */
+/* Removes Will or retained messages. */
 void handle_remove_stored_messages(const char *publisher_id);
 
 /* Responses back to a publisher on RNP/<publisher_id>. */
