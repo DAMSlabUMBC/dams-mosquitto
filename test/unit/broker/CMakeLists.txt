@@ -59,6 +59,7 @@ add_library(persistence-write-obj
         ../../../src/persist_write_v5.c
         ../../../src/persist_write.c
         ../../../src/retain.c
+        ../../../src/rights_broker.c
         ../../../src/subs.c
         ../../../lib/sp_registry.c 
         ../../../lib/ri_registry.c 
@@ -90,6 +91,8 @@ add_library(subs-obj
         ../../../lib/property_mosq.c
         ../../../lib/packet_datatypes.c
         ../../../src/database.c
+        ../../../src/rights_broker.c
+        ../../../src/retain.c
         ../../../src/subs.c
         ../../../lib/ri_registry.c  
         ../../../lib/sp_registry.c  

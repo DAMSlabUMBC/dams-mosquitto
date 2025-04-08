@@ -25,7 +25,12 @@ WORKDIR /opt/mqtt_brokers/dams-mosquitto
 COPY . /opt/mqtt_brokers/dams-mosquitto
 
 # Build the broker with LTO disabled and ENGINE_cleanup disabled
-RUN cmake -DWITH_LTO=OFF -DWITH_CLIENTS=OFF -DWITH_BROKER=ON -DCMAKE_C_FLAGS="-DDISABLE_ENGINE_CLEANUP" . && make
+RUN cmake -DWITH_LTO=OFF \
+          -DWITH_CLIENTS=OFF \
+          -DWITH_BROKER=ON \
+          -DWITH_TESTS=OFF \
+          -DCMAKE_C_FLAGS="-DDISABLE_ENGINE_CLEANUP" . \
+ && make
 
 # Copy the built Mosquitto binary and library to system directories, then update the linker cache
 RUN cp src/mosquitto /usr/local/sbin/mosquitto && \
