@@ -7,7 +7,7 @@
 extern "C" {
 #endif
 
-/* A single GDPR right-invocation request in MQTT-PF. */
+/* A single GDPR right-invocation request in MQTT-DAP. */
 struct right_invocation {
     char *client_id;
     char *correlation_data;

@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y \
     libcunit1-dev \
     xsltproc \
     docbook-xsl \
+    iproute2 \
+    iputils-ping \
  && rm -rf /var/lib/apt/lists/*
 
 # Set working directory to project root
