@@ -231,7 +231,7 @@ int handle__publish(struct mosquitto *context)
 				/* (2) Registration by Message */
 				else if(db.config->purpose_filter_method == MOSQ_DAP_MSG_REG)
 				{
-					/* Check if this is a registration message on $PF/purpose_management */
+					/* Check if this is a registration message on $DAP/purpose_management */
 					if(!strcmp(base_msg->data.topic, MOSQ_DAP_PM_TOPIC))
 					{
 						/* Since there can be multiple user properties, loop through them */
@@ -306,7 +306,7 @@ int handle__publish(struct mosquitto *context)
 				/* (3) Registration by Topic */
 				else if(db.config->purpose_filter_method == MOSQ_DAP_TOPIC_REG)
 				{
-					/* Check if this is a registration topic starting with $PF/MP_reg/ */
+					/* Check if this is a registration topic starting with $DAP/MP_reg/ */
 					if(strlen(base_msg->data.topic) >= strlen(MOSQ_DAP_MP_REG_TOPIC) && !strncmp(base_msg->data.topic, MOSQ_DAP_MP_REG_TOPIC, strlen(MOSQ_DAP_MP_REG_TOPIC)))
 					{
 						/* Parse out real_topic and mp_value from the bracketed suffix */
@@ -338,7 +338,7 @@ int handle__publish(struct mosquitto *context)
 						mosquitto_property_free_all(&properties);
 						return MOSQ_ERR_SUCCESS;
 					}
-					/* Check if the subscription topic begins with "$PF/SP_reg/" */
+					/* Check if the subscription topic begins with "$DAP/SP_reg/" */
 					else if(strlen(base_msg->data.topic) >= strlen(MOSQ_DAP_SP_REG_TOPIC) && !strncmp(base_msg->data.topic, MOSQ_DAP_SP_REG_TOPIC, strlen(MOSQ_DAP_SP_REG_TOPIC)))
 					{
 						/*  Parse the special subscription topic of the form */
