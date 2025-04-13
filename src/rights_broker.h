@@ -17,9 +17,9 @@ bool is_sub_online(const char *sub_id);
 void handle_remove_stored_messages(const char *publisher_id);
 
 /* Responses back to a publisher on RNP/<publisher_id>. */
-void broker_send_response_success(const char *publisher_id, const char *operation, const char *corr_data, const char *payload, char* response_topic);
-void broker_send_response_pending(const char *publisher_id, const char *operation, const char *corr_data, int deadline_sec);
-void broker_send_response_failure(const char *publisher_id, const char *operation, const char *corr_data, const char *reason,
+void broker_send_response_success(const char *publisher_id, const char *operation, const char *corr_data, uint16_t correlation_data_len, const char *payload, char* response_topic);
+void broker_send_response_pending(const char *publisher_id, const char *operation, const char *corr_data, uint16_t correlation_data_len, int deadline_sec);
+void broker_send_response_failure(const char *publisher_id, const char *operation, const char *corr_data, uint16_t correlation_data_len, const char *reason,
     struct subscriber_list *unreached_subs);
 
 /* For enumerating who got the publisher's data (C1). */
@@ -29,7 +29,7 @@ struct subscription_list *find_subscriptions_for_publisher(const char *publisher
 struct subscriber_list *find_subscribers_with_data(const char *publisher_id, const char *data_filter);
 
 /* Forward a right request to RRS/<sub_id> if online, else add to an offline list. */
-struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub_list, struct mosquitto_base_msg *msg_data, char* response_topic);
+struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub_list, struct mosquitto_base_msg *msg_data, char* response_topic, char* op_id, char* op_info, char* correlation_data, uint16_t correlation_data_len);
 
 /* Data structures for returning lists of subscribers. */
 typedef struct subscription_list {

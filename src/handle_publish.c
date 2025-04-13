@@ -62,6 +62,7 @@ int handle__publish(struct mosquitto *context)
 	char *op_id = NULL;
 	char *op_info = NULL; 
 	char *correlation_data = NULL;
+	uint16_t correlation_data_len = 0;
 	char *response_topic = NULL;
 
 	bool found_purpose_filter = false;
@@ -466,7 +467,7 @@ int handle__publish(struct mosquitto *context)
 					}
 					else if (p->identifier == MQTT_PROP_CORRELATION_DATA)
 					{
-						mosquitto_property_read_string(p, MQTT_PROP_CORRELATION_DATA, &correlation_data, false);
+						mosquitto_property_read_binary(p, MQTT_PROP_CORRELATION_DATA, (void **)&correlation_data, &correlation_data_len, false);
 					}
 					else if(p->identifier == MQTT_PROP_RESPONSE_TOPIC)
 					{
@@ -695,7 +696,7 @@ int handle__publish(struct mosquitto *context)
 					while(subs){
 						const char *info = ri__lookup_info(subs->subscriber_id);
 						if(info){
-							broker_send_response_success(context->id, op_id, correlation_data, info, response_topic);
+							broker_send_response_success(context->id, op_id, correlation_data, correlation_data_len, info, response_topic);
 							ri__mark_sent_to_pub(context->id, subs->subscriber_id);
 						}
 						subs = subs->next;
@@ -715,13 +716,13 @@ int handle__publish(struct mosquitto *context)
 				{
 					/* Foward requests only to subs that have data */
 					subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
-					subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, response_topic);
+					subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, response_topic, op_id, op_info, correlation_data, correlation_data_len);
 					if(offline){
-						broker_send_response_failure(context->id, op_id, correlation_data, "Subscriber not connected", offline);
+						broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Subscriber not connected", offline);
 					}
 					else
 					{
-						broker_send_response_success(context->id, op_id, correlation_data, NULL, response_topic);
+						broker_send_response_success(context->id, op_id, correlation_data, correlation_data_len, NULL, response_topic);
 					}
 
 					/* Erasure has an extra consideration */
@@ -734,7 +735,7 @@ int handle__publish(struct mosquitto *context)
 				else
 				{
 					/* Unrecognized right. */
-					broker_send_response_failure(context->id, op_id, correlation_data, "Unknown right", NULL);
+					broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Unknown right", NULL);
 				}
 			}
 		}

@@ -1,5 +1,6 @@
 #include <string.h>
 #include <stdio.h>
+#include <stdint.h>
 #include "rights_broker.h"
 #include "mosquitto_broker_internal.h" 
 #include "util_mosq.h"
@@ -47,7 +48,7 @@ void handle_remove_stored_messages(const char *publisher_id)
 }
 
 /* Sends a basic status response to RNP/<publisher_id>. */
-void broker_send_response_success(const char *publisher_id, const char *operation, const char *corr_data, const char *payload, char* response_topic)
+void broker_send_response_success(const char *publisher_id, const char *operation, const char *corr_data, uint16_t correlation_data_len, const char *payload, char* response_topic)
 {
     if(!publisher_id) return;
 
@@ -55,10 +56,16 @@ void broker_send_response_success(const char *publisher_id, const char *operatio
     {
         char onp_topic[256];
         snprintf(onp_topic, sizeof(onp_topic), "%s/%s", MOSQ_DAP_TOPIC_ONP, publisher_id);
-        response_topic = onp_topic;
+        response_topic = mosquitto_strdup(onp_topic);
     }
 
     mosquitto_property *props = NULL;
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_CONSENT_KEY, "1");
+
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_ID_KEY, mosquitto_strdup(publisher_id));
+
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
         MOSQ_DAP_OP_KEY, mosquitto_strdup(operation));
 
@@ -69,7 +76,7 @@ void broker_send_response_success(const char *publisher_id, const char *operatio
         MOSQ_DAP_REASON_KEY, "");
     
     if(corr_data){
-        mosquitto_property_add_string(&props, MQTT_PROP_CORRELATION_DATA, corr_data);
+        mosquitto_property_add_binary(&props, MQTT_PROP_CORRELATION_DATA, corr_data, correlation_data_len);
     }
 
     if(payload)
@@ -85,13 +92,19 @@ void broker_send_response_success(const char *publisher_id, const char *operatio
 }
 
 /* Notifies publisher of offline subs, setting DAP-Deadline & DAP-UnreachedClients. */
-void broker_send_response_pending(const char *publisher_id, const char *operation, const char *corr_data, int deadline_sec)
+void broker_send_response_pending(const char *publisher_id, const char *operation, const char *corr_data, uint16_t correlation_data_len, int deadline_sec)
 {
     if(!publisher_id) return;
     char onp_topic[256];
     snprintf(onp_topic, sizeof(onp_topic), "%s/%s", MOSQ_DAP_TOPIC_ONP, publisher_id);
 
     mosquitto_property *props = NULL;
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_CONSENT_KEY, "1");
+
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_ID_KEY, mosquitto_strdup(publisher_id));
+
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
         MOSQ_DAP_OP_KEY, mosquitto_strdup(operation));
 
@@ -107,7 +120,7 @@ void broker_send_response_pending(const char *publisher_id, const char *operatio
         MOSQ_DAP_DEADLINE_KEY, deadline_buf);
 
     if(corr_data){
-        mosquitto_property_add_string(&props, MQTT_PROP_CORRELATION_DATA, corr_data);
+        mosquitto_property_add_binary(&props, MQTT_PROP_CORRELATION_DATA, corr_data, correlation_data_len);
     }
 
     db__messages_easy_queue_with_purpose(NULL, onp_topic, MOSQ_DAP_OP_PURPOSE, 0, 0, NULL, false, 0, &props);
@@ -115,7 +128,7 @@ void broker_send_response_pending(const char *publisher_id, const char *operatio
 }
 
 /* Sends a final failure to RNP/<publisher_id> (e.g. unknown right or offline never reconnected). */
-void broker_send_response_failure(const char *publisher_id, const char *operation, const char *corr_data, const char *reason,
+void broker_send_response_failure(const char *publisher_id, const char *operation, const char *corr_data, uint16_t correlation_data_len, const char *reason,
     struct subscriber_list *unreached_subs)
 {
     if(!publisher_id) return;
@@ -123,6 +136,12 @@ void broker_send_response_failure(const char *publisher_id, const char *operatio
     snprintf(onp_topic, sizeof(onp_topic), "%s/%s", MOSQ_DAP_TOPIC_ONP, publisher_id);
 
     mosquitto_property *props = NULL;
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_CONSENT_KEY, "1");
+
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_ID_KEY, mosquitto_strdup(publisher_id));
+
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
         MOSQ_DAP_OP_KEY, mosquitto_strdup(operation));
 
@@ -135,7 +154,7 @@ void broker_send_response_failure(const char *publisher_id, const char *operatio
     }
 
     if(corr_data){
-        mosquitto_property_add_string(&props, MQTT_PROP_CORRELATION_DATA, corr_data);
+        mosquitto_property_add_binary(&props, MQTT_PROP_CORRELATION_DATA, corr_data, correlation_data_len);
     }
 
     if(unreached_subs)
@@ -207,14 +226,11 @@ struct subscriber_list *find_subscribers_with_data(const char *publisher_id, con
 }
 
 /* Publishes a right request to RRS/<sub> if online, else collects them offline. */
-struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub_list, struct mosquitto_base_msg *msg_data, char* response_topic)
+struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub_list, struct mosquitto_base_msg *msg_data, char* response_topic, char* op_id, char* op_info, char* correlation_data, uint16_t correlation_data_len)
 {
     struct subscriber_list *offline_head = NULL;
 
     while(sub_list){
-        log__printf(NULL, MOSQ_LOG_DEBUG,
-            "Checking %s, ", sub_list->sub_id);
-
         if(is_sub_online(sub_list->sub_id)){
 
             if (response_topic == NULL)
@@ -224,7 +240,24 @@ struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub
                 response_topic = ors_topic;
             }
 
-            db__messages_easy_queue_with_purpose(NULL, response_topic, MOSQ_DAP_OP_PURPOSE, msg_data->qos, msg_data->payloadlen, msg_data->payload, msg_data->retain, msg_data->expiry_time, &msg_data->properties);
+            mosquitto_property *props = NULL;
+            mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+                MOSQ_DAP_CONSENT_KEY, "1");
+
+            mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+                MOSQ_DAP_ID_KEY, mosquitto_strdup(msg_data->source_id));
+
+            mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+                MOSQ_DAP_OP_KEY, mosquitto_strdup(op_id));
+
+            mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+                MOSQ_DAP_OP_INFO_KEY, mosquitto_strdup(op_info));
+
+            if(correlation_data){
+                mosquitto_property_add_binary(&props, MQTT_PROP_CORRELATION_DATA, correlation_data, correlation_data_len);
+            }
+
+            db__messages_easy_queue_with_purpose(NULL, response_topic, MOSQ_DAP_OP_PURPOSE, msg_data->qos, msg_data->payloadlen, msg_data->payload, msg_data->retain, msg_data->expiry_time, &props);
         } else {
             struct subscriber_list *off = mosquitto_calloc(1, sizeof(*off));
             off->sub_id = mosquitto_strdup(sub_list->sub_id);
