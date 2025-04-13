@@ -39,8 +39,6 @@ void handle_remove_stored_messages(const char *publisher_id)
     struct dr_retained_entry *cur = dr_retained_head;
     while(cur){
         if(!strcmp(cur->pub_id, publisher_id)){
-            log__printf(NULL, MOSQ_LOG_INFO,
-                "DELETING ON %s", cur->topic);
             mosquitto_persist_retain_msg_delete(cur->topic);
         }
         cur = cur->next;
@@ -64,7 +62,7 @@ void broker_send_response_success(const char *publisher_id, const char *operatio
         MOSQ_DAP_CONSENT_KEY, "1");
 
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
-        MOSQ_DAP_ID_KEY, mosquitto_strdup(publisher_id));
+        MOSQ_DAP_ID_KEY, "Broker");
 
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
         MOSQ_DAP_OP_KEY, mosquitto_strdup(operation));
@@ -103,7 +101,7 @@ void broker_send_response_pending(const char *publisher_id, const char *operatio
         MOSQ_DAP_CONSENT_KEY, "1");
 
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
-        MOSQ_DAP_ID_KEY, mosquitto_strdup(publisher_id));
+        MOSQ_DAP_ID_KEY, "Broker");
 
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
         MOSQ_DAP_OP_KEY, mosquitto_strdup(operation));
@@ -140,7 +138,7 @@ void broker_send_response_failure(const char *publisher_id, const char *operatio
         MOSQ_DAP_CONSENT_KEY, "1");
 
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
-        MOSQ_DAP_ID_KEY, mosquitto_strdup(publisher_id));
+        MOSQ_DAP_ID_KEY, "Broker");
 
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
         MOSQ_DAP_OP_KEY, mosquitto_strdup(operation));
@@ -178,6 +176,7 @@ void broker_send_response_failure(const char *publisher_id, const char *operatio
 struct subscription_list *find_subscriptions_for_publisher(const char *publisher_id)
 {
     struct subscription_list *head = NULL;
+    struct subscription_list *check_ptr = NULL;
     extern struct dr_entry *dr_head;
     struct dr_entry *cur = dr_head;
 
@@ -185,12 +184,31 @@ struct subscription_list *find_subscriptions_for_publisher(const char *publisher
         if(!strcmp(cur->pub_id, publisher_id)){
             struct dr_sublist *s = cur->sub_list;
             while(s){
-                struct subscription_list *node = mosquitto_calloc(1, sizeof(*node));
-                if(!node) return head;
-                node->subscriber_id = mosquitto_strdup(s->sub_id);
-                node->topic        = mosquitto_strdup(cur->topic);
-                node->next         = head;
-                head = node;
+
+                bool found = false;
+                check_ptr = head;
+                while(check_ptr)
+                {
+                    /* We've already added this subscriber */
+                    if(!strcmp(check_ptr->subscriber_id, s->sub_id))
+                    {
+                        found = true;
+                        break;
+                    }
+
+                    check_ptr = check_ptr->next;
+                }
+
+                if (!found) 
+                {
+                    struct subscription_list *node = mosquitto_calloc(1, sizeof(*node));
+                    if(!node) return head;
+                    node->subscriber_id = mosquitto_strdup(s->sub_id);
+                    node->topic        = mosquitto_strdup(cur->topic);
+                    node->next         = head;
+                    head = node;
+                }
+
                 s = s->next;
             }
         }
@@ -203,6 +221,7 @@ struct subscription_list *find_subscriptions_for_publisher(const char *publisher
 struct subscriber_list *find_subscribers_with_data(const char *publisher_id, const char *data_filter)
 {
     struct subscriber_list *head = NULL;
+    struct subscriber_list *check_ptr = NULL;
     extern struct dr_entry *dr_head;
     struct dr_entry *cur = dr_head;
 
@@ -211,11 +230,30 @@ struct subscriber_list *find_subscribers_with_data(const char *publisher_id, con
             if(data_filter && (strstr(cur->topic, data_filter) || !strcmp(data_filter, MOSQ_DAP_ALLOW_ALL_FILTER))) {
                 struct dr_sublist *s = cur->sub_list;
                 while(s){
-                    struct subscriber_list *node = mosquitto_calloc(1, sizeof(*node));
-                    if(!node) return head;
-                    node->sub_id = mosquitto_strdup(s->sub_id);
-                    node->next   = head;
-                    head         = node;
+
+                    bool found = false;
+                    check_ptr = head;
+                    while(check_ptr)
+                    {
+                        /* We've already added this subscriber */
+                        if(!strcmp(check_ptr->sub_id, s->sub_id))
+                        {
+                            found = true;
+                            break;
+                        }
+
+                        check_ptr = check_ptr->next;
+                    }
+
+                    if (!found) 
+                    {
+                        /* New subscriber, add */
+                        struct subscriber_list *node = mosquitto_calloc(1, sizeof(*node));
+                        if(!node) return head;
+                        node->sub_id = mosquitto_strdup(s->sub_id);
+                        node->next   = head;
+                        head         = node;
+                    }
                     s = s->next;
                 }
             }
@@ -232,13 +270,9 @@ struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub
 
     while(sub_list){
         if(is_sub_online(sub_list->sub_id)){
-
-            if (response_topic == NULL)
-            {
-                char ors_topic[256];
-                snprintf(ors_topic, sizeof(ors_topic), "%s/%s", MOSQ_DAP_TOPIC_ORS, sub_list->sub_id);
-                response_topic = ors_topic;
-            }
+            char ors_topic[256];
+            snprintf(ors_topic, sizeof(ors_topic), "%s/%s", MOSQ_DAP_TOPIC_ORS, sub_list->sub_id);
+            response_topic = ors_topic;
 
             mosquitto_property *props = NULL;
             mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
@@ -257,7 +291,7 @@ struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub
                 mosquitto_property_add_binary(&props, MQTT_PROP_CORRELATION_DATA, correlation_data, correlation_data_len);
             }
 
-            db__messages_easy_queue_with_purpose(NULL, response_topic, MOSQ_DAP_OP_PURPOSE, msg_data->qos, msg_data->payloadlen, msg_data->payload, msg_data->retain, msg_data->expiry_time, &props);
+            db__messages_easy_queue_with_purpose(NULL, mosquitto_strdup(response_topic), MOSQ_DAP_OP_PURPOSE, msg_data->qos, msg_data->payloadlen, msg_data->payload, msg_data->retain, msg_data->expiry_time, &props);
         } else {
             struct subscriber_list *off = mosquitto_calloc(1, sizeof(*off));
             off->sub_id = mosquitto_strdup(sub_list->sub_id);

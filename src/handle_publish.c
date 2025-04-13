@@ -716,7 +716,7 @@ int handle__publish(struct mosquitto *context)
 				{
 					/* Foward requests only to subs that have data */
 					subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
-					subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, response_topic, op_id, op_info, correlation_data, correlation_data_len);
+					subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, NULL, op_id, op_info, correlation_data, correlation_data_len);
 					if(offline){
 						broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Subscriber not connected", offline);
 					}
