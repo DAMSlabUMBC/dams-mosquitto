@@ -1,26 +1,79 @@
-Eclipse Mosquitto
-=================
+MQTT-DAP: Data Protection Extension for Eclipse Mosquitto
+==========================================================
 
-Mosquitto is an open source implementation of a server for version 5.0, 3.1.1,
+This repository contains a modified implementation of Eclipse Mosquitto that implements **MQTT-DAP (MQTT for Data Protection)**, a framework for extending the MQTT protocol to facilitate the protection of sensitive data in IoT systems.
+
+## About MQTT-DAP
+
+MQTT-DAP extends MQTT v5 to provide protocol-level data protection mechanisms, including:
+
+- **Purpose-Based Access Control (PBAC)**: Ensures that sensitive data is only delivered to subscribers with explicitly permitted purposes for processing that data
+- **Data Linkability**: Tracks data provenance and enables auditing of data flows through the system
+- **Data Protection Operations**: Supports standardized operations for data access requests, corrections, deletions, and purpose updates
+- **GDPR Compliance**: Facilitates compliance with privacy regulations like GDPR through structured handling of data subject requests
+
+### Key Features
+
+- Purpose-based message filtering to prevent unauthorized data access
+- Support for hierarchical purpose definitions (e.g., "billing/electricity")
+- Protocol-level enforcement of explicit consent for data processing
+- Standardized request/response patterns for data protection operations
+- Backward compatibility with standard MQTT topics and payloads
+- Designed for resource-constrained IoT environments
+
+### Use Cases
+
+MQTT-DAP is designed for IoT deployments in privacy-sensitive domains:
+
+- **Industrial IoT**: Protecting proprietary manufacturing data while allowing selective sharing with suppliers and partners
+- **Healthcare**: Ensuring patient data is only accessed for legitimate medical purposes
+- **Smart Cities**: Managing citizen data with transparent purpose tracking and consent management
+
+## How MQTT-DAP Works
+
+MQTT-DAP uses MQTT v5 user properties to embed data protection metadata in control packets:
+
+1. **Purpose Filters**: Publishers specify allowed purposes using the `DAP-MP` (Message Purpose) property; subscribers declare their intended purposes using `DAP-SP` (Subscription Purpose)
+2. **Purpose Matching**: The broker ensures messages are only delivered to subscribers whose stated purposes are explicitly permitted by the publisher
+3. **Data Tracking**: The `DAP-ClientID` property links each message to its publisher, enabling auditing and data subject requests
+4. **Explicit Consent**: The `DAP-Allow` property serves as an unambiguous indicator that the publisher consents to data collection
+
+### Example
+
+```bash
+# Subscriber registers interest in temperature data for billing purposes
+mosquitto_sub -t 'sensors/temperature' -D subscribe user-property DAP-SP "billing/electricity:sensors/temperature"
+
+# Publisher sends temperature data allowed for billing purposes
+mosquitto_pub -t 'sensors/temperature' -m '22.5' \
+  -D publish user-property DAP-MP "billing/electricity" \
+  -D publish user-property DAP-ClientID "sensor-01" \
+  -D publish user-property DAP-Allow "1"
+```
+
+## Original Mosquitto Implementation
+
+This implementation is based on Eclipse Mosquitto, an open source implementation of a server for version 5.0, 3.1.1,
 and 3.1 of the MQTT protocol. It also includes a C and C++ client library, and
 the `mosquitto_pub` and `mosquitto_sub` utilities for publishing and
 subscribing.
 
 ## Links
 
-See the following links for more information on MQTT:
+### MQTT-DAP Resources
+
+- Research paper: "MQTT-DAP: A Data Protection Extension of the MQTT Protocol" 
+
+### MQTT Protocol Information
 
 - Community page: <http://mqtt.org/>
-- MQTT v3.1.1 standard: <https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/mqtt-v3.1.1.html>
 - MQTT v5.0 standard: <https://docs.oasis-open.org/mqtt/mqtt/v5.0/mqtt-v5.0.html>
 
-Mosquitto project information is available at the following locations:
+### Original Mosquitto Project
 
 - Main homepage: <https://mosquitto.org/>
-- Find existing bugs or submit a new bug: <https://github.com/eclipse/mosquitto/issues>
 - Source code repository: <https://github.com/eclipse/mosquitto>
-
-There is also a public test server available at <https://test.mosquitto.org/>
+- Bug tracker: <https://github.com/eclipse/mosquitto/issues>
 
 ## Installing
 
