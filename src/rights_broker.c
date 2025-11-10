@@ -272,7 +272,6 @@ struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub
         if(is_sub_online(sub_list->sub_id)){
             char ors_topic[256];
             snprintf(ors_topic, sizeof(ors_topic), "%s/%s", MOSQ_DAP_TOPIC_ORS, sub_list->sub_id);
-            response_topic = ors_topic;
 
             mosquitto_property *props = NULL;
             mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
@@ -291,7 +290,11 @@ struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub
                 mosquitto_property_add_binary(&props, MQTT_PROP_CORRELATION_DATA, correlation_data, correlation_data_len);
             }
 
-            db__messages_easy_queue_with_purpose(NULL, mosquitto_strdup(response_topic), MOSQ_DAP_OP_PURPOSE, msg_data->qos, msg_data->payloadlen, msg_data->payload, msg_data->retain, msg_data->expiry_time, &props);
+            if(response_topic){
+                mosquitto_property_add_string(&props, MQTT_PROP_RESPONSE_TOPIC, response_topic);
+            }
+
+            db__messages_easy_queue_with_purpose(NULL, mosquitto_strdup(ors_topic), MOSQ_DAP_OP_PURPOSE, msg_data->qos, msg_data->payloadlen, msg_data->payload, msg_data->retain, msg_data->expiry_time, &props);
         } else {
             struct subscriber_list *off = mosquitto_calloc(1, sizeof(*off));
             off->sub_id = mosquitto_strdup(sub_list->sub_id);
