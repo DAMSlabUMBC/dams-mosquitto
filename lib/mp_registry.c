@@ -25,8 +25,10 @@ static unsigned int mp__hashstr(const char *str)
 {
     unsigned long hash = 5381; 
     unsigned long c;
+    unsigned long index = 1;
     while((c = (unsigned char) *str++)){
-        hash = ((hash << 5) + hash) ^ c;
+        hash = ((hash << 5) + hash) ^ (c * index);
+        index++;
     }
     return (unsigned int)(hash % MPREG_HASH_SIZE);
 }
