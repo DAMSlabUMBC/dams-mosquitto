@@ -8,7 +8,7 @@
 #include "util_mosq.h"
 #include "sp_registry.h"
 
-#define SPREG_HASH_SIZE 256
+#define SPREG_HASH_SIZE 65535
 
 /* Chain-based hash entry */
 struct sp_entry {
@@ -25,10 +25,8 @@ static unsigned int sp__hashstr(const char *str)
 {
     unsigned long hash = 5381;
     uint32_t c;
-    unsigned long index = 1;
     while((c = (unsigned char)(*str++))){
-        hash = ((hash << 5) + hash) ^ (c * index);
-        index++;
+        hash = ((hash << 5) + hash) + (c);
     }
     return (unsigned int)(hash % SPREG_HASH_SIZE);
 }
