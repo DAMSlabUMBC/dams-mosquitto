@@ -8,7 +8,7 @@
 #include "util_mosq.h"                
 #include "mp_registry.h"
 
-#define MPREG_HASH_SIZE 256
+#define MPREG_HASH_SIZE 65535
 
 /* A single entry in the hash chain. */
 struct mp_entry {
@@ -25,10 +25,8 @@ static unsigned int mp__hashstr(const char *str)
 {
     unsigned long hash = 5381; 
     unsigned long c;
-    unsigned long index = 1;
     while((c = (unsigned char) *str++)){
-        hash = ((hash << 5) + hash) ^ (c * index);
-        index++;
+        hash = ((hash << 5) + hash) + c;
     }
     return (unsigned int)(hash % MPREG_HASH_SIZE);
 }
