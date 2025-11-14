@@ -190,4 +190,4 @@ Equivalent options for enabling/disabling features are available when using CMak
 
 ## Credits
 
-Mosquitto was written by Roger Light <roger@atchoo.org>
+The original version of Mosquitto was written by Roger Light <roger@atchoo.org>
