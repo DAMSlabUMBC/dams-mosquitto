@@ -74,7 +74,6 @@ The benchmark provides:
 
 ### MQTT-DAP Resources
 
-- Research paper: "MQTT-DAP: A Data Protection Extension of the MQTT Protocol"
 - Benchmark framework: [MQTT-DAP Benchmark](https://github.com/DAMSlabUMBC/Pub-Sub-Privacy)
 
 ### MQTT Protocol Information
