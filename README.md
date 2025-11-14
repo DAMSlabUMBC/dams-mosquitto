@@ -59,7 +59,7 @@ subscribing.
 
 ## Testing MQTT-DAP-Mosquitto
 
-For comprehensive testing and evaluation of MQTT-DAP-Mosquitto, use the [MQTT-DAP Benchmark](https://github.com/DAMSlabUMBC/Pub-Sub-Privacy) framework.
+For comprehensive testing and evaluation of MQTT-DAP-Mosquitto, use the [MQTT-DAP Benchmark](https://anonymous.4open.science/r/Submission-1074-MQTT-DAP-Benchmark/)framework.
 
 The benchmark provides:
 - Automated testing across all purpose management methods (PM0-PM4)
@@ -74,7 +74,7 @@ The benchmark provides:
 
 ### MQTT-DAP Resources
 
-- Benchmark framework: [MQTT-DAP Benchmark](https://github.com/DAMSlabUMBC/Pub-Sub-Privacy)
+- Benchmark framework: [MQTT-DAP Benchmark](https://anonymous.4open.science/r/Submission-1074-MQTT-DAP-Benchmark/)
 
 ### MQTT Protocol Information
 
