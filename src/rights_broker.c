@@ -6,7 +6,8 @@
 #include "util_mosq.h"
 #include "property_mosq.h"
 #include "send_mosq.h"
-#include "dr_registry.h" 
+#include "dr_registry.h"
+#include "dap_deadline_tracker.h"
 
 /* Finds a client context by ID by calling db__find_context_by_id(). */
 struct mosquitto *broker_find_context_by_id(const char *client_id)
@@ -89,8 +90,10 @@ void broker_send_response_success(const char *publisher_id, const char *operatio
     mosquitto_property_free_all(&props);
 }
 
-/* Notifies publisher of offline subs, setting DAP-Deadline & DAP-UnreachedClients. */
-void broker_send_response_pending(const char *publisher_id, const char *operation, const char *corr_data, uint16_t correlation_data_len, int deadline_sec)
+/* Acknowledge a validated pending op to ONP/<publisher_id>, carrying the
+ * broker-assigned numeric op id and the absolute deadline (epoch seconds). The final
+ * Success/Failure is settled later by the status path / deadline sweep, not here. */
+void broker_send_response_pending(const char *publisher_id, const char *operation, uint64_t op_id, const char *corr_data, uint16_t correlation_data_len, time_t deadline)
 {
     if(!publisher_id) return;
     char onp_topic[256];
@@ -104,16 +107,21 @@ void broker_send_response_pending(const char *publisher_id, const char *operatio
         MOSQ_DAP_ID_KEY, "Broker");
 
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
-        MOSQ_DAP_OP_KEY, mosquitto_strdup(operation));
+        MOSQ_DAP_OP_KEY, operation);
+
+    char opid_buf[32];
+    snprintf(opid_buf, sizeof(opid_buf), "%llu", (unsigned long long)op_id);
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_OP_ID_KEY, opid_buf);
 
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
         MOSQ_DAP_STATUS_KEY, "Pending");
 
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
-        MOSQ_DAP_REASON_KEY, "Subscriber not connected");
+        MOSQ_DAP_REASON_KEY, "Awaiting subscriber responses");
 
     char deadline_buf[32];
-    snprintf(deadline_buf, sizeof(deadline_buf), "%d", deadline_sec);
+    snprintf(deadline_buf, sizeof(deadline_buf), "%lld", (long long)deadline);
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
         MOSQ_DAP_DEADLINE_KEY, deadline_buf);
 
@@ -264,7 +272,7 @@ struct subscriber_list *find_subscribers_with_data(const char *publisher_id, con
 }
 
 /* Publishes a right request to RRS/<sub> if online, else collects them offline. */
-struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub_list, struct mosquitto_base_msg *msg_data, char* response_topic, char* op_id, char* op_info, char* correlation_data, uint16_t correlation_data_len)
+struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub_list, struct mosquitto_base_msg *msg_data, char* response_topic, char* op_id, char* op_info, char* correlation_data, uint16_t correlation_data_len, uint64_t op_id_num)
 {
     struct subscriber_list *offline_head = NULL;
 
@@ -287,6 +295,15 @@ struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub
             mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
                 MOSQ_DAP_OP_INFO_KEY, mosquitto_strdup(op_info));
 
+            /* For a pending op (DELETE/RESTRICT) carry the broker-assigned numeric id so
+             * the subscriber can reference it in its status reply. */
+            if(op_id_num != 0){
+                char opid_buf[32];
+                snprintf(opid_buf, sizeof(opid_buf), "%llu", (unsigned long long)op_id_num);
+                mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+                    MOSQ_DAP_OP_ID_KEY, opid_buf);
+            }
+
             if(correlation_data){
                 mosquitto_property_add_binary(&props, MQTT_PROP_CORRELATION_DATA, correlation_data, correlation_data_len);
             }
@@ -301,4 +318,163 @@ struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub
         sub_list = sub_list->next;
     }
     return offline_head;
+}
+
+/* Pending-op dispatch (DELETE/RESTRICT). The relevant set was computed by
+ * dr__find_relevant_subscribers (topic/purpose/client filters + OpBefore/OpAfter
+ * bounds). (1) forward the request to whoever is online now on their ORS, carrying
+ * the numeric op id; (2) register the op with the deadline tracker against the full
+ * relevant set, so any subscriber that has not responded by the deadline is reported;
+ * (3) echo a Pending ack with the op id + deadline back to the requester. Offline
+ * relevant subs are not forwarded now; they remain unresponded and surface as
+ * unreached clients when the deadline passes. */
+void broker_dispatch_pending_operation(const char *publisher_id, const char *operation,
+    uint64_t op_id, struct dr_sublist *relevant, struct mosquitto_base_msg *msg_data,
+    char *op_info, char *correlation_data, uint16_t correlation_data_len, time_t deadline)
+{
+    if(!publisher_id) return;
+
+    /* Count the relevant subs, then build both a transient subscriber_list (so the
+     * existing ORS forwarder can be reused) and a borrowed id array for the tracker. */
+    size_t n = 0;
+    for(struct dr_sublist *s = relevant; s; s = s->next) n++;
+
+    /* No subscriber ever received matching data from this publisher, so there is
+     * nothing to wait for: settle the op immediately as Success rather than echoing
+     * Pending and letting it expire silently. The requester correlates via
+     * correlation data, like the immediate-success rights. */
+    if(n == 0){
+        broker_send_response_success(publisher_id, operation, correlation_data, correlation_data_len, NULL, NULL);
+        return;
+    }
+
+    const char **ids = NULL;
+    if(n > 0){
+        ids = mosquitto_calloc(n, sizeof(char*));
+    }
+
+    struct subscriber_list *fwd = NULL;
+    size_t i = 0;
+    for(struct dr_sublist *s = relevant; s; s = s->next){
+        struct subscriber_list *node = mosquitto_calloc(1, sizeof(*node));
+        if(node){
+            node->sub_id = mosquitto_strdup(s->sub_id);
+            node->next   = fwd;
+            fwd          = node;
+        }
+        if(ids) ids[i] = s->sub_id; /* borrowed; the tracker copies on register */
+        i++;
+    }
+
+    /* (1) Forward to the online relevant subs; discard the offline list - the tracker,
+     * not an immediate failure, now owns the "didn't reach them" outcome. */
+    struct subscriber_list *offline = forward_request_to_connected(fwd, msg_data, NULL,
+        (char *)operation, op_info, correlation_data, correlation_data_len, op_id);
+    while(fwd){
+        struct subscriber_list *t = fwd->next;
+        mosquitto_FREE(fwd->sub_id);
+        mosquitto_FREE(fwd);
+        fwd = t;
+    }
+    while(offline){
+        struct subscriber_list *t = offline->next;
+        mosquitto_FREE(offline->sub_id);
+        mosquitto_FREE(offline);
+        offline = t;
+    }
+
+    /* (2) Track the op so the main-loop sweep can report unresponded subs at expiry.
+     * Guard the count against a failed ids allocation so a NULL array is never paired
+     * with a non-zero count (the op then tracks no expected subs rather than crashing). */
+    if(db.dap_deadline_tracker){
+        dap_deadline_tracker_register_pending_operation(db.dap_deadline_tracker, op_id,
+            publisher_id, ids, ids ? n : 0, deadline);
+    }
+    mosquitto_FREE(ids);
+
+    /* (3) Echo the validated request back to the requester with op id + deadline. */
+    broker_send_response_pending(publisher_id, operation, op_id, correlation_data, correlation_data_len, deadline);
+}
+
+/* Deadline-expiry notification, built from the deadline tracker's expired-op result
+ * (op id + publisher + the ids that never responded). Sent to ONP/<publisher_id> as
+ * a Failure keyed by DAP-OpId, listing the unresponded subscribers in
+ * DAP-UnreachedClients. */
+void broker_send_deadline_failure(uint64_t op_id, const char *publisher_id,
+    char **unresponded_subs, size_t num_unresponded)
+{
+    if(!publisher_id) return;
+    char onp_topic[256];
+    snprintf(onp_topic, sizeof(onp_topic), "%s/%s", MOSQ_DAP_TOPIC_ONP, publisher_id);
+
+    mosquitto_property *props = NULL;
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_CONSENT_KEY, "1");
+
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_ID_KEY, "Broker");
+
+    char opid_buf[32];
+    snprintf(opid_buf, sizeof(opid_buf), "%llu", (unsigned long long)op_id);
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_OP_ID_KEY, opid_buf);
+
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_STATUS_KEY, "Failure");
+
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_REASON_KEY, "Operation deadline expired");
+
+    if(unresponded_subs && num_unresponded > 0){
+        char contact_buf[256];
+        contact_buf[0] = '\0';
+        for(size_t i = 0; i < num_unresponded; i++){
+            size_t used = strlen(contact_buf);
+            if(used + 1 >= sizeof(contact_buf)) break;
+            strncat(contact_buf, unresponded_subs[i], sizeof(contact_buf) - 1 - used);
+            used = strlen(contact_buf);
+            if(used + 1 < sizeof(contact_buf)){
+                strncat(contact_buf, " ", sizeof(contact_buf) - 1 - used);
+            }
+        }
+        mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+            MOSQ_DAP_UNREACHED_CLIENTS_KEY, contact_buf);
+    }
+
+    db__messages_easy_queue_with_purpose(NULL, onp_topic, MOSQ_DAP_OP_PURPOSE, 0, 0, NULL, false, 0, &props);
+    mosquitto_property_free_all(&props);
+}
+
+/* All-responded notification, built from the deadline tracker's expired-op result
+ * (op id + publisher) when every expected subscriber responded before the deadline.
+ * Sent to ONP/<publisher_id> as a Success keyed by DAP-OpId, mirroring
+ * broker_send_deadline_failure. This can only fire once an inbound status path marks
+ * subscribers responded; until then a tracked op with >=1 relevant subscriber always
+ * reaches the deadline unresponded and takes the failure branch. */
+void broker_send_deadline_success(uint64_t op_id, const char *publisher_id)
+{
+    if(!publisher_id) return;
+    char onp_topic[256];
+    snprintf(onp_topic, sizeof(onp_topic), "%s/%s", MOSQ_DAP_TOPIC_ONP, publisher_id);
+
+    mosquitto_property *props = NULL;
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_CONSENT_KEY, "1");
+
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_ID_KEY, "Broker");
+
+    char opid_buf[32];
+    snprintf(opid_buf, sizeof(opid_buf), "%llu", (unsigned long long)op_id);
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_OP_ID_KEY, opid_buf);
+
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_STATUS_KEY, "Success");
+
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_REASON_KEY, "All subscribers responded");
+
+    db__messages_easy_queue_with_purpose(NULL, onp_topic, MOSQ_DAP_OP_PURPOSE, 0, 0, NULL, false, 0, &props);
+    mosquitto_property_free_all(&props);
 }

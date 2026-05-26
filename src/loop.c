@@ -52,6 +52,8 @@ Contributors:
 #include "send_mosq.h"
 #include "sys_tree.h"
 #include "util_mosq.h"
+#include "rights_broker.h"
+#include "dap_deadline_tracker.h"
 
 extern int g_run;
 
@@ -162,6 +164,30 @@ void loop__update_next_event(time_t new_ms)
 }
 
 
+/* Sweep the deadline tracker for operations whose deadline has passed and notify the
+ * requesting publisher of any subscriber that never responded. Cheap when nothing is
+ * tracked; db.now_real_s is refreshed each iteration by mux__handle. */
+static void dap_deadline__check(void)
+{
+	if(!db.config->use_protection_framework) return;
+	if(!db.dap_deadline_tracker) return;
+
+	struct dap_expired_op *expired = dap_deadline_tracker_check_expired(db.dap_deadline_tracker, db.now_real_s);
+	for(struct dap_expired_op *e = expired; e; e = e->next){
+		if(e->num_unresponded > 0){
+			broker_send_deadline_failure(e->op_id, e->publisher_id, e->unresponded_subs, e->num_unresponded);
+		}else{
+			/* Every relevant subscriber responded before the deadline: Success.
+			 * Dormant until an inbound status path marks subscribers responded; until
+			 * then num_unresponded is never 0 for a tracked op (zero-sub ops settle
+			 * immediately in broker_dispatch_pending_operation and are never tracked). */
+			broker_send_deadline_success(e->op_id, e->publisher_id);
+		}
+	}
+	dap_deadline_tracker_free_expired(expired);
+}
+
+
 int mosquitto_main_loop(struct mosquitto__listener_sock *listensock, int listensock_count)
 {
 #ifdef WITH_PERSISTENCE
@@ -201,6 +227,7 @@ int mosquitto_main_loop(struct mosquitto__listener_sock *listensock, int listens
 		plugin__handle_tick();
 		session_expiry__check();
 		will_delay__check();
+		dap_deadline__check();
 
 		rc = mux__handle(listensock, listensock_count);
 		if(rc) return rc;

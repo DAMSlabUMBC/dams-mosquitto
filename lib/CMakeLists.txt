@@ -37,7 +37,6 @@ set(C_SRC
 	property_mosq.c property_mosq.h
 	purpose_filters.c purpose_filters.h
 	mp_registry.c mp_registry.h
-	sp_registry.c sp_registry.h
 	ri_registry.c ri_registry.h
 	dr_registry.c dr_registry.h
 	rights_registry.c rights_registry.h

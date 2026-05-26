@@ -14,6 +14,7 @@
 struct mp_entry {
     char *topic;           /* "sensors/temp" */
     char *purpose_filter;  /* "ads/targeted" */
+    uint32_t version;      /* MP version, starts at 1 and bumps on every update */
     struct mp_entry *next; /* pointer to next in the chain */
 };
 
@@ -66,10 +67,11 @@ void mp__register_topic(const char* id, const char *topic, const char *mp_value)
     struct mp_entry *curr = g_mp_buckets[bucket_index];
     while(curr){
         if(!strcmp(curr->topic, topic)){
-            /* Found existing so overwrite the purpose filter */
+            /* Found existing so overwrite the purpose filter and bump the version */
             mosquitto_FREE(curr->purpose_filter);
             curr->purpose_filter = mosquitto_strdup(mp_value);
-            return; 
+            curr->version++;
+            return;
         }
         curr = curr->next;
     }
@@ -78,6 +80,7 @@ void mp__register_topic(const char* id, const char *topic, const char *mp_value)
     struct mp_entry *entry = mosquitto_calloc(1, sizeof(*entry));
     entry->topic          = mosquitto_strdup(topic);
     entry->purpose_filter = mosquitto_strdup(mp_value);
+    entry->version        = 1; /* first registration starts at version 1 */
     entry->next           = g_mp_buckets[bucket_index];
     g_mp_buckets[bucket_index] = entry;
 }
@@ -100,4 +103,23 @@ char *mp__lookup_topic(const char* id, const char *topic)
         curr = curr->next;
     }
     return NULL; /* Not found */
+}
+
+/* Look up the current version of the stored purpose filter for a topic */
+uint32_t mp__lookup_version(const char* id, const char *topic)
+{
+    char* hash_string = mosquitto_malloc(strlen(id) + strlen(topic) + 1);
+    strcpy(hash_string, id);
+    strcat(hash_string, topic);
+    unsigned int bucket_index = mp__hashstr(hash_string);
+    mosquitto_FREE(hash_string);
+
+    struct mp_entry *curr = g_mp_buckets[bucket_index];
+    while(curr){
+        if(!strcmp(curr->topic, topic)){
+            return curr->version; /* Found it */
+        }
+        curr = curr->next;
+    }
+    return 0; /* Not found */
 }

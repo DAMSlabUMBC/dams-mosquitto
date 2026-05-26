@@ -52,24 +52,32 @@ Contributors:
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
-#include "sp_registry.h" 
+#include <time.h>
+#include "mp_registry.h"
 #include "mosquitto_broker_internal.h"
 #include "mosquitto/mqtt_protocol.h"
 #include "util_mosq.h"
-#include "dr_registry.h" 
+#include "dr_registry.h"
 #include "ri_registry.h"
-#include "rights_broker.h" 
+#include "rights_broker.h"
 #include "purpose_filters.h"
+#include "dap_subscription_queues.h"
+#include "dap_stamp.h"
 #include "utlist.h"
 
 static struct mosquitto__subhier *sub__add_hier_entry(struct mosquitto__subhier *parent, struct mosquitto__subhier **sibling, const char *topic, uint16_t len);
 
-static int subs__send(struct mosquitto__subleaf *leaf, const char *topic, uint8_t qos, int retain, struct mosquitto__base_msg *stored)
+static int subs__send(struct mosquitto__subleaf *leaf, const char *topic, uint8_t qos, int retain, struct mosquitto__base_msg *stored, uint16_t *mid_out)
 {
 	bool client_retain;
 	uint16_t mid;
 	uint8_t client_qos, msg_qos;
 	int rc2;
+
+	/* mid_out reports the per-client message id assigned here, so the DAP stamping
+	 * in subs__process can correlate the stamped copy with the wire message.
+	 * Default 0 covers the early returns (ACL deny, QoS 0) that carry no mid. */
+	if(mid_out) *mid_out = 0;
 
 	/* Check for ACL topic access. */
 	rc2 = mosquitto_acl_check(leaf->context, topic, stored->data.payloadlen, stored->data.payload, stored->data.qos, stored->data.retain, MOSQ_ACL_READ);
@@ -92,6 +100,7 @@ static int subs__send(struct mosquitto__subleaf *leaf, const char *topic, uint8_
 		}else{
 			mid = 0;
 		}
+		if(mid_out) *mid_out = mid;
 		if(MQTT_SUB_OPT_GET_RETAIN_AS_PUBLISHED(leaf->subscription_options)){
 			client_retain = retain;
 		}else{
@@ -115,7 +124,7 @@ static int subs__shared_process(struct mosquitto__subhier *hier, const char *top
 
 	HASH_ITER(hh, hier->shared, shared, shared_tmp){
 		leaf = shared->subs;
-		rc2 = subs__send(leaf, topic, qos, retain, stored);
+		rc2 = subs__send(leaf, topic, qos, retain, stored, NULL);
 		/* Remove current from the top, add back to the bottom */
 		DL_DELETE(shared->subs, leaf);
 		DL_APPEND(shared->subs, leaf);
@@ -190,42 +199,9 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 						}
 					}
 				}
-
-				/* (3) Topic Registration */
-				else if (db.config->purpose_filter_method == MOSQ_DAP_TOPIC_REG)
-				{
-					/* There needs to be a registered SP for this topic */
-					char *registered_sp = sp__lookup_topic(leaf->context->id, leaf->topic_filter);
-					if(!registered_sp)
-					{
-						leaf = leaf->next;
-							continue;
-					}
-
-					if(!allow_all_purposes)
-					{
-						/* Match the message filter with the subscription */
-						bool filter_found = false;
-
-						uint32_t num_results = 0;
-						char** purposes = parse_purpose_filter(registered_sp, &num_results);
-
-						for(uint8_t i = 0; i < num_results; i++)
-						{
-							if(strcmp(purposes[i], stored->data.purpose_filter) == 0)
-							{
-								filter_found = true;
-								break;
-							}
-						}
-
-						if(!filter_found)
-						{
-							leaf = leaf->next;
-							continue;
-						}
-					}
-				}
+				/* (3) Topic Registration (MOSQ_DAP_TOPIC_REG) no longer matches
+				 * purposes subscriber-side: the $SP_REG path and SP registry were
+				 * removed, so no subscriber-side purpose filtering applies here. */
 			}
 
 			if(db.config->metadata_operation_handling)
@@ -243,11 +219,37 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 				}
 			}
 		}
-		rc2 = subs__send(leaf, topic, qos, retain, stored);
+		uint16_t sent_mid = 0;
+		rc2 = subs__send(leaf, topic, qos, retain, stored, &sent_mid);
 
-		if(db.config->use_protection_framework && db.config->metadata_operation_handling && record)
+		/* Alongside the per-client queue subs__send filled above, stamp this matched
+		 * message into the subscription's own topic queue (created on first use). The
+		 * pending-op map decides the outcome: a DELETE drops the message (not queued
+		 * here), a RESTRICT stamps it with the deciding op id, NONE leaves it
+		 * unstamped. The send path still drives off the per-client queue. The stored
+		 * message is borrowed, not owned by the queue. */
+		enum dap_op_action dap_action = DAP_OP_ACTION_NONE;
+		if(db.config->use_protection_framework && leaf->context && leaf->context->id){
+			if(!leaf->dap_queues){
+				leaf->dap_queues = mosquitto_calloc(1, sizeof(struct dap_subscription_queues));
+				if(leaf->dap_queues){
+					dap_subscription_queues_init(leaf->dap_queues);
+				}
+			}
+			if(leaf->dap_queues){
+				const char *purpose = stored->data.has_purpose_filter ? stored->data.purpose_filter : NULL;
+				dap_stamp_and_enqueue(leaf->dap_queues, db.dap_pending_ops,
+						stored->data.source_id, leaf->context->id, topic,
+						sent_mid, leaf->sp_version, purpose, stored, stored->dap_recv_time, &dap_action);
+			}
+		}
+
+		/* A DELETE-matched message was not delivered, so don't record it as having
+		 * reached this recipient. */
+		if(db.config->use_protection_framework && db.config->metadata_operation_handling
+				&& record && dap_action != DAP_OP_ACTION_DROP)
 		{
-			dr__record_recipient(stored->data.source_id, topic, leaf->context->id);
+			dr__record_recipient(stored->data.source_id, topic, leaf->context->id, stored->dap_recv_time);
 		}
 
 		if(rc2){
@@ -263,6 +265,27 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 }
 
 
+/* Free a purpose-filter array (each string plus the array itself). */
+static void sub__free_purpose_filters(char **filters, uint32_t count)
+{
+	if(!filters) return;
+	for(uint32_t i = 0; i < count; i++){
+		mosquitto_FREE(filters[i]);
+	}
+	mosquitto_FREE(filters);
+}
+
+/* True when two purpose-filter sets are identical: same count and same strings in
+ * the same order (the order the subscriber sent them). Two empty sets are equal. */
+static bool sub__purpose_filters_equal(char **a, uint32_t na, char **b, uint32_t nb)
+{
+	if(na != nb) return false;
+	for(uint32_t i = 0; i < na; i++){
+		if(strcmp(a[i], b[i]) != 0) return false;
+	}
+	return true;
+}
+
 static int sub__add_leaf(struct mosquitto *context, const struct mosquitto_subscription *sub, struct mosquitto__subleaf **head, struct mosquitto__subleaf **newleaf)
 {
 	struct mosquitto__subleaf *leaf;
@@ -277,6 +300,19 @@ static int sub__add_leaf(struct mosquitto *context, const struct mosquitto_subsc
 			 * indicate this to the calling function. */
 			leaf->identifier = sub->identifier;
 			leaf->subscription_options = sub->options;
+			/* The DAP SP lives on the leaf. A re-subscribe that changes the
+			 * purpose-filter set replaces it and bumps the SP version; an unchanged
+			 * re-subscribe frees the duplicate incoming set, which is not adopted
+			 * elsewhere. */
+			if(!sub__purpose_filters_equal(leaf->purpose_filters, leaf->purpose_filter_count,
+					sub->purpose_filters, sub->purpose_filter_count)){
+				sub__free_purpose_filters(leaf->purpose_filters, leaf->purpose_filter_count);
+				leaf->purpose_filters = sub->purpose_filters;
+				leaf->purpose_filter_count = sub->purpose_filter_count;
+				leaf->sp_version++;
+			}else{
+				sub__free_purpose_filters(sub->purpose_filters, sub->purpose_filter_count);
+			}
 			return MOSQ_ERR_SUB_EXISTS;
 		}
 		leaf = leaf->next;
@@ -289,6 +325,8 @@ static int sub__add_leaf(struct mosquitto *context, const struct mosquitto_subsc
 	strcpy(leaf->topic_filter, sub->topic_filter);
 	leaf->purpose_filter_count = sub->purpose_filter_count;
 	leaf->purpose_filters = sub->purpose_filters;
+	/* SP version starts at 1 when the subscription carries an SP, 0 otherwise. */
+	leaf->sp_version = (sub->purpose_filter_count > 0) ? 1 : 0;
 
 	DL_APPEND(*head, leaf);
 	*newleaf = leaf;
@@ -463,6 +501,22 @@ static int sub__add_context(struct mosquitto *context, const struct mosquitto_su
 }
 
 
+/* Free the per-leaf DAP allocations before the leaf itself is freed: the topic
+ * queues (lazily created) and the SP purpose-filter set adopted from SUBSCRIBE.
+ * The stored messages inside the queues are borrowed and not owned here. */
+static void dap__leaf_free(struct mosquitto__subleaf *leaf)
+{
+	if(!leaf) return;
+	if(leaf->dap_queues){
+		dap_subscription_queues_destroy(leaf->dap_queues);
+		mosquitto_FREE(leaf->dap_queues);
+		leaf->dap_queues = NULL;
+	}
+	sub__free_purpose_filters(leaf->purpose_filters, leaf->purpose_filter_count);
+	leaf->purpose_filters = NULL;
+	leaf->purpose_filter_count = 0;
+}
+
 static int sub__remove_normal(struct mosquitto *context, struct mosquitto__subhier *subhier, uint8_t *reason)
 {
 	struct mosquitto__subleaf *leaf;
@@ -482,6 +536,7 @@ static int sub__remove_normal(struct mosquitto *context, struct mosquitto__subhi
 			for(int i=0; i<context->subs_capacity; i++){
 				if(context->subs[i] && context->subs[i]->hier == subhier){
 					context->subs_count--;
+					dap__leaf_free(context->subs[i]);
 					mosquitto_free(context->subs[i]);
 					context->subs[i] = NULL;
 					break;
@@ -519,6 +574,7 @@ static int sub__remove_shared(struct mosquitto *context, struct mosquitto__subhi
 							&& context->subs[i]->hier == subhier
 							&& context->subs[i]->shared == shared){
 
+						dap__leaf_free(context->subs[i]);
 						mosquitto_free(context->subs[i]);
 						context->subs[i] = NULL;
 						context->subs_count--;
@@ -865,6 +921,7 @@ int sub__clean_session(struct mosquitto *context)
 				leaf = leaf->next;
 			}
 		}
+		dap__leaf_free(context->subs[i]);
 		mosquitto_FREE(context->subs[i]);
 
 		if(hier->subs == NULL

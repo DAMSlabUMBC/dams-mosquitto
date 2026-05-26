@@ -55,10 +55,17 @@ add_executable(mosquitto
 	psk_file.c
 	../lib/purpose_filters.c ../lib/purpose_filters.h
 	../lib/mp_registry.c ../lib/mp_registry.h
-	../lib/sp_registry.c ../lib/sp_registry.h
 	../lib/ri_registry.c ../lib/ri_registry.h
 	../lib/dr_registry.c ../lib/dr_registry.h
 	../lib/rights_registry.c ../lib/rights_registry.h
+	../lib/dap_subscription_queues.c ../lib/dap_subscription_queues.h
+	../lib/dap_pending_ops.c ../lib/dap_pending_ops.h
+	../lib/dap_op_request.c ../lib/dap_op_request.h
+	../lib/dap_deadline_tracker.c ../lib/dap_deadline_tracker.h
+	../lib/dap_timestamp.c ../lib/dap_timestamp.h
+	../lib/dap_stamp.c ../lib/dap_stamp.h
+	../lib/dap_send_verify.c ../lib/dap_send_verify.h
+	../lib/dap_holding_list.c ../lib/dap_holding_list.h
 	read_handle.c
 	../lib/read_handle.h
 	retain.c

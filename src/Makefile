@@ -131,10 +131,14 @@ OBJS_EXTERNAL= \
 		property_mosq.o \
 		purpose_filters.o \
 		mp_registry.o \
-		sp_registry.o \
 		ri_registry.o \
 		dr_registry.o \
 		rights_registry.o \
+		dap_subscription_queues.o \
+		dap_pending_ops.o \
+		dap_op_request.o \
+		dap_timestamp.o \
+		dap_stamp.o \
 		send_connect.o \
 		send_disconnect.o \
 		send_mosq.o \
@@ -209,13 +213,25 @@ purpose_filters.o : ${R}/lib/purpose_filters.c ${R}/lib/purpose_filters.h
 mp_registry.o : ${R}/lib/mp_registry.c ${R}/lib/mp_registry.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-sp_registry.o : ${R}/lib/sp_registry.c ${R}/lib/sp_registry.h
-	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
-
 ri_registry.o : ${R}/lib/ri_registry.c ${R}/lib/ri_registry.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
 dr_registry.o : ${R}/lib/dr_registry.c ${R}/lib/dr_registry.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+dap_subscription_queues.o : ${R}/lib/dap_subscription_queues.c ${R}/lib/dap_subscription_queues.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+dap_pending_ops.o : ${R}/lib/dap_pending_ops.c ${R}/lib/dap_pending_ops.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+dap_op_request.o : ${R}/lib/dap_op_request.c ${R}/lib/dap_op_request.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+dap_timestamp.o : ${R}/lib/dap_timestamp.c ${R}/lib/dap_timestamp.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+dap_stamp.o : ${R}/lib/dap_stamp.c ${R}/lib/dap_stamp.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
 rights_registry.o : ${R}/lib/rights_registry.c ${R}/lib/rights_registry.h

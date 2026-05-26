@@ -1,0 +1,46 @@
+/* dap_stamp.c */
+
+#include "dap_stamp.h"
+#include "mp_registry.h"
+#include "dap_subscription_queues.h"
+#include "dap_pending_ops.h"
+
+int dap_stamp_and_enqueue(struct dap_subscription_queues *queues,
+                          struct dap_pending_ops *pending_ops,
+                          const char *publisher_id,
+                          const char *subscriber_id,
+                          const char *topic,
+                          uint16_t mid,
+                          uint32_t sp_version,
+                          const char *purpose,
+                          struct mosquitto__base_msg *msg,
+                          time_t enqueue_time,
+                          enum dap_op_action *action_out)
+{
+    if(!queues) return 1;
+
+    /* MP version is keyed by (publisher, topic); an unregistered topic looks up as 0. */
+    uint32_t mp_version = mp__lookup_version(publisher_id, topic);
+
+    /* Consult the pending-op map for this publisher. A NULL map yields NONE. */
+    uint64_t op_id = 0;
+    enum dap_op_action action = dap_pending_ops_match(pending_ops, publisher_id, topic,
+                                                      purpose, subscriber_id, enqueue_time,
+                                                      &op_id);
+    if(action_out) *action_out = action;
+
+    /* A DELETE supersedes delivery: do not enqueue the message at all. The caller
+     * reads action_out to also skip recording the recipient. */
+    if(action == DAP_OP_ACTION_DROP){
+        return 0;
+    }
+
+    /* A RESTRICT stamps the message with the single deciding op id; NONE leaves the
+     * applied-op list empty. */
+    if(action == DAP_OP_ACTION_RESTRICT){
+        return dap_subscription_queues_enqueue(queues, topic, msg, mid, mp_version, sp_version,
+                                               &op_id, 1, enqueue_time);
+    }
+    return dap_subscription_queues_enqueue(queues, topic, msg, mid, mp_version, sp_version,
+                                           NULL, 0, enqueue_time);
+}

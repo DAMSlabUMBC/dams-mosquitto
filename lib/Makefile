@@ -71,7 +71,6 @@ OBJS= \
 	property_mosq.o \
 	purpose_filters.o \
 	mp_registry.o \
-	sp_registry.o \
 	ri_registry.o \
 	dr_registry.o \
 	rights_registry.o \

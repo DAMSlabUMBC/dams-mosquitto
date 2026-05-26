@@ -19,6 +19,7 @@ Contributors:
 #include "config.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "mosquitto_broker_internal.h"
@@ -28,9 +29,10 @@ Contributors:
 #include "mp_registry.h" 
 #include "ri_registry.h" 
 #include "dr_registry.h" 
-#include "rights_registry.h" 
-#include "rights_broker.h" 
-#include "sp_registry.h" 
+#include "rights_registry.h"
+#include "rights_broker.h"
+#include "dap_op_request.h"
+#include "dap_timestamp.h"
 #include "property_common.h"
 #include "property_mosq.h"
 #include "read_handle.h"
@@ -60,7 +62,16 @@ int handle__publish(struct mosquitto *context)
 	// For operations
 	bool found_op = false;
 	char *op_id = NULL;
-	char *op_info = NULL; 
+	char *op_info = NULL;
+	/* DAP-OpTFs / DAP-OpPFs / DAP-OpClients: the operation's comma-separated topic,
+	 * purpose and client filter lists. */
+	char *op_topic_filters = NULL;
+	char *op_purpose_filters = NULL;
+	char *op_client_filters = NULL;
+	/* DAP-OpBefore / DAP-OpAfter: the operation's receipt-time bounds (decimal
+	 * seconds; 0 = unbounded), used by the relevance query. */
+	time_t op_before = 0;
+	time_t op_after = 0;
 	char *correlation_data = NULL;
 	uint16_t correlation_data_len = 0;
 	char *response_topic = NULL;
@@ -77,6 +88,13 @@ int handle__publish(struct mosquitto *context)
 	base_msg = mosquitto_calloc(1, sizeof(struct mosquitto__base_msg));
 	if(base_msg == NULL){
 		return MOSQ_ERR_NOMEM;
+	}
+
+	/* Stamp the receipt time once, before any other DAP processing, so a single
+	 * reference timestamp drives both queue ordering and pending-operation matching.
+	 * Only meaningful under the protection framework; left 0 otherwise. */
+	if(db.config->use_protection_framework){
+		base_msg->dap_recv_time = time(NULL);
 	}
 
 	dup = (header & 0x08)>>3;
@@ -338,94 +356,10 @@ int handle__publish(struct mosquitto *context)
 						mosquitto_property_free_all(&properties);
 						return MOSQ_ERR_SUCCESS;
 					}
-					/* Check if the subscription topic begins with "$DAP/SP_reg/" */
-					else if(strlen(base_msg->data.topic) >= strlen(MOSQ_DAP_SP_REG_TOPIC) && !strncmp(base_msg->data.topic, MOSQ_DAP_SP_REG_TOPIC, strlen(MOSQ_DAP_SP_REG_TOPIC)))
-					{
-						/*  Parse the special subscription topic of the form */
-						const char *rest = base_msg->data.topic + strlen(MOSQ_DAP_SP_REG_TOPIC);
-
-						/* SP can contain replacement terms for wildcards */
-						char* curr_string = malloc(strlen(rest) + 1);
-						strcpy(curr_string, rest);
-
-						int found = 1;
-						while(found)
-						{
-							found = 0;
-							
-							// Check for HASH first
-							char* replace_start = strstr(curr_string, "HASH");
-							if(replace_start != NULL)
-							{
-								size_t start_index = (size_t)(replace_start - curr_string);
-								char* hash_end = replace_start + 4;
-								size_t len_after_hash = strlen(hash_end);
-								
-								curr_string[start_index] = '#'; // Replace next part with literal '#'
-								strncpy(&curr_string[start_index + 1], hash_end, len_after_hash); // Fill in the rest
-								curr_string[start_index + len_after_hash + 1] = '\0';
-								found = 1;
-							}
-							
-							// Now check for PLUS
-							replace_start = strstr(curr_string, "PLUS");
-							if(replace_start != NULL)
-							{
-								size_t start_index = (size_t)(replace_start - curr_string);
-								char* hash_end = replace_start + 4;
-								size_t len_after_hash = strlen(hash_end);
-								
-								curr_string[start_index] = '+'; // Replace next part with literal '#'
-								strncpy(&curr_string[start_index + 1], hash_end, len_after_hash); // Fill in the rest
-								curr_string[start_index + len_after_hash + 1] = '\0';
-								found = 1;
-							}
-						}
-
-						rest = curr_string;
-						
-						/* Buffers for the real topic and the subscriber SP */
-						char rt[256] = {0};
-						char sp_val[256] = {0};
-						const char *b = strchr(rest, '[');
-						if (!b)
-						{
-							log__printf(NULL, MOSQ_LOG_INFO, 
-								"SP registration error: missing '[' in %s", base_msg->data.topic);
-							mosquitto_property_free_all(&properties);
-							return MOSQ_ERR_INVAL;
-						}
-				
-						/* Calculate and copy the real topic */
-						size_t rlen = b - rest;
-						if (rlen > 255)
-							rlen = 255;
-						memcpy(rt, rest, rlen);
-						rt[rlen] = '\0';
-				
-						/* Find the closing bracket that ends the SP value */
-						const char *eb = strrchr(b, ']');
-						if (!eb)
-						{
-							log__printf(NULL, MOSQ_LOG_INFO, 
-								"SP registration error: missing ']' in %s", base_msg->data.topic);
-							return MOSQ_ERR_INVAL;
-						}
-				
-						/* Copy the subscriber SP */
-						size_t splen = eb - (b + 1);
-						if (splen > 255)
-							splen = 255;
-						memcpy(sp_val, b + 1, splen);
-						sp_val[splen] = '\0';
-				
-						/* Register this SP for the real topic in the sp_registry */
-						sp__register_topic(context->id, rt, sp_val);
-
-						/* Return success so that this is not forwarded as a normal subscription */
-						mosquitto_property_free_all(&properties);
-						return MOSQ_ERR_SUCCESS;
-					}
+					/* $DAP/SP_reg/ handling and the SP registry were removed; the
+					 * subscriber SP now lives on the subscription leaf, set from the
+					 * SUBSCRIBE path. A former SP_reg topic falls through to a normal
+					 * data publish below. */
 					else
 					{
 						/* Normal data publish */
@@ -448,7 +382,7 @@ int handle__publish(struct mosquitto *context)
 			/* Read all potential operational properties for later */
 			if(db.config->metadata_operation_handling)
 			{
-				/* Look through the user properties for DAP-Operation */
+				/* Look through the user properties for DAP-OpType */
 				const mosquitto_property *p = properties;
 				while(p){
 					if(p->identifier == MQTT_PROP_USER_PROPERTY){
@@ -456,12 +390,22 @@ int handle__publish(struct mosquitto *context)
 						mosquitto_property_read_string_pair(p, MQTT_PROP_USER_PROPERTY, &name, &value, false);
 
 						if(name && value){
-							/* If we find DAP-Operation then note it. */
+							/* If we find DAP-OpType then note it. */
 							if(!strcmp(name, MOSQ_DAP_OP_KEY)){
 								found_op = true;
 								op_id  = mosquitto_strdup(value);
 							} else if(!strcmp(name, MOSQ_DAP_OP_INFO_KEY)){
 								op_info = mosquitto_strdup(value);
+							} else if(!strcmp(name, MOSQ_DAP_OP_TFS_KEY)){
+								op_topic_filters = mosquitto_strdup(value);
+							} else if(!strcmp(name, MOSQ_DAP_OP_PFS_KEY)){
+								op_purpose_filters = mosquitto_strdup(value);
+							} else if(!strcmp(name, MOSQ_DAP_OP_CLIENTS_KEY)){
+								op_client_filters = mosquitto_strdup(value);
+							} else if(!strcmp(name, MOSQ_DAP_OP_BEFORE_KEY)){
+								op_before = (time_t)strtoll(value, NULL, 10);
+							} else if(!strcmp(name, MOSQ_DAP_OP_AFTER_KEY)){
+								op_after = (time_t)strtoll(value, NULL, 10);
 							}
 						}
 					}
@@ -485,6 +429,16 @@ int handle__publish(struct mosquitto *context)
 			mosquitto_property_free_all(&properties);
 			db__msg_store_free(base_msg);
 			return MOSQ_ERR_PROTOCOL;
+		}
+
+		/* Expose the receipt timestamp to subscribers as a user property, so they
+		 * share the broker's reference time for ordering. */
+		if(db.config->use_protection_framework){
+			char ts_buf[32];
+			if(dap_timestamp_format(base_msg->dap_recv_time, ts_buf, sizeof(ts_buf)) == 0){
+				mosquitto_property_add_string_pair(&base_msg->data.properties,
+						MQTT_PROP_USER_PROPERTY, MOSQ_DAP_TIMESTAMP_KEY, ts_buf);
+			}
 		}
 	}
 	mosquitto_property_free_all(&properties);
@@ -714,22 +668,76 @@ int handle__publish(struct mosquitto *context)
 				|| !strcmp(op_id, MOSQ_DAP_RIGHT_ERASURE) || !strcmp(op_id, MOSQ_DAP_RIGHT_RESTRICTION)   || !strcmp(op_id, MOSQ_DAP_RIGHT_OBJECT) 
 				|| !strcmp(op_id, MOSQ_DAP_RIGHT_AUTODECISION))
 				{
-					/* Foward requests only to subs that have data */
-					subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
-					subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, NULL, op_id, op_info, correlation_data, correlation_data_len);
-					if(offline){
-						broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Subscriber not connected", offline);
+					/* DELETE/RESTRICT become pending operations in the broker-wide map;
+					 * dap_op_request_insert succeeds for exactly those two and assigns the
+					 * numeric op id. Every other right (Access/Portability/Rectification/
+					 * Object/AutoDecision) falls through to the unchanged immediate path. */
+					uint64_t pending_op_id = 0;
+					bool is_pending_op = (dap_op_request_insert(db.dap_pending_ops, context->id, op_id,
+								op_topic_filters, op_purpose_filters, op_client_filters,
+								stored->dap_recv_time, &pending_op_id) == 0);
+
+					if(is_pending_op)
+					{
+						/* Deadline workflow. Relevant subscribers are those that received
+						 * data from this publisher matching the operation's topic/purpose/
+						 * client filters within the DAP-OpBefore/OpAfter receipt-time
+						 * bounds (0 = unbounded on that side). */
+						log__printf(NULL, MOSQ_LOG_DEBUG,
+								"DAP pending operation %llu (%s) registered for %s; bounds after=%lld before=%lld",
+								(unsigned long long)pending_op_id, op_id, context->id,
+								(long long)op_after, (long long)op_before);
+
+						struct dr_sublist *relevant = dr__find_relevant_subscribers(context->id,
+								op_topic_filters, op_purpose_filters, op_client_filters,
+								op_before, op_after);
+
+						/* Assign a deadline relative to the receipt timestamp, forward to the
+						 * relevant subs on their ORS, register the op with the deadline
+						 * tracker, and echo a Pending ack (op id + deadline) to the requester.
+						 * The final Success/Failure is settled by the deadline sweep (loop.c)
+						 * and the status path, not synchronously here. */
+						time_t deadline = stored->dap_recv_time + MOSQ_DAP_DEFAULT_DEADLINE_SECS;
+						broker_dispatch_pending_operation(context->id, op_id, pending_op_id,
+								relevant, &stored->data, op_info,
+								correlation_data, correlation_data_len, deadline);
+						dr__free_sublist(relevant);
+
+						/* DELETE additionally drops the publisher's stored will/retained data. */
+						if(!strcmp(op_id, MOSQ_DAP_RIGHT_ERASURE))
+						{
+							handle_remove_stored_messages(context->id);
+						}
 					}
 					else
 					{
-						broker_send_response_success(context->id, op_id, correlation_data, correlation_data_len, NULL, response_topic);
+						/* Non-pending rights: unchanged immediate forward + Success/Failure. */
+						subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
+						subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, NULL, op_id, op_info, correlation_data, correlation_data_len, 0);
+						if(offline){
+							broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Subscriber not connected", offline);
+						}
+						else
+						{
+							broker_send_response_success(context->id, op_id, correlation_data, correlation_data_len, NULL, response_topic);
+						}
 					}
+				}
 
-					/* Erasure has an extra consideration */
-					if(!strcmp(op_id, MOSQ_DAP_RIGHT_ERASURE))
-					{
-						handle_remove_stored_messages(context->id);
-					}
+				/* DAP operation types recognized but not yet implemented. Acknowledged
+				 * here so they are not rejected as unknown. */
+				else if(!strcmp(op_id, MOSQ_DAP_OP_AUDIT) || !strcmp(op_id, MOSQ_DAP_OP_HISTORY)
+						|| !strcmp(op_id, MOSQ_DAP_OP_UPDATE) || !strcmp(op_id, MOSQ_DAP_OP_REGISTER_INFO))
+				{
+					log__printf(NULL, MOSQ_LOG_INFO,
+							"DAP operation %s from %s not yet implemented", op_id, context->id);
+				}
+
+				/* Generic operator-defined operation ("O:" prefix), also not implemented. */
+				else if(!strncmp(op_id, MOSQ_DAP_OP_PREFIX, strlen(MOSQ_DAP_OP_PREFIX)))
+				{
+					log__printf(NULL, MOSQ_LOG_INFO,
+							"DAP generic operation %s from %s not yet implemented", op_id, context->id);
 				}
 
 				else
@@ -740,6 +748,12 @@ int handle__publish(struct mosquitto *context)
 			}
 		}
 	}
+
+	/* DAP-OpTFs/OpPFs/OpClients were copied by the pending-ops insert; release the
+	 * parsed copies (mosquitto_FREE no-ops on the NULLs of a non-operation publish). */
+	mosquitto_FREE(op_topic_filters);
+	mosquitto_FREE(op_purpose_filters);
+	mosquitto_FREE(op_client_filters);
 
 	switch(stored->data.qos){
 		case 0:

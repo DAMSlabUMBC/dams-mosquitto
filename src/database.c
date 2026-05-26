@@ -26,6 +26,12 @@ Contributors:
 #include "send_mosq.h"
 #include "sys_tree.h"
 #include "util_mosq.h"
+#include "dap_pending_ops.h"
+#include "dap_deadline_tracker.h"
+#include "dap_holding_list.h"
+#include "dap_subscription_queues.h"
+#include "dap_send_verify.h"
+#include "mp_registry.h"
 
 /**
  * Is this context ready to take more in flight messages right now?
@@ -199,6 +205,30 @@ int db__open(struct mosquitto__config *config)
 	sub__init();
 	retain__init();
 
+	/* Broker-wide map of pending publisher operations, consulted at enqueue time in
+	 * subs__process. Allocated unconditionally; it stays empty until operations are
+	 * inserted, and the enqueue-time lookup is gated on use_protection_framework. */
+	db.dap_pending_ops = mosquitto_calloc(1, sizeof(struct dap_pending_ops));
+	if(db.dap_pending_ops){
+		dap_pending_ops_init(db.dap_pending_ops);
+	}
+
+	/* Broker-wide tracker for operations awaiting subscriber status notifications,
+	 * swept for expired deadlines on the main loop. Allocated unconditionally; it
+	 * stays empty until a DELETE/RESTRICT operation is registered. */
+	db.dap_deadline_tracker = mosquitto_calloc(1, sizeof(struct dap_deadline_tracker));
+	if(db.dap_deadline_tracker){
+		dap_deadline_tracker_init(db.dap_deadline_tracker);
+	}
+
+	/* Broker-wide per-client hold list for messages parked while one of a client's
+	 * messages is re-verified at send time. Allocated unconditionally; it stays empty
+	 * until the send-path hook bumps a message back. */
+	db.dap_holding_list = mosquitto_calloc(1, sizeof(struct dap_holding_list));
+	if(db.dap_holding_list){
+		dap_holding_list_init(db.dap_holding_list);
+	}
+
 	db.config->security_options.unpwd = NULL;
 
 #ifdef WITH_PERSISTENCE
@@ -305,6 +335,21 @@ int db__close(void)
 	subhier_clean(&db.shared_subs);
 	retain__clean(&db.retains);
 	db__msg_store_clean();
+
+	if(db.dap_pending_ops){
+		dap_pending_ops_destroy(db.dap_pending_ops);
+		mosquitto_FREE(db.dap_pending_ops);
+	}
+
+	if(db.dap_deadline_tracker){
+		dap_deadline_tracker_destroy(db.dap_deadline_tracker);
+		mosquitto_FREE(db.dap_deadline_tracker);
+	}
+
+	if(db.dap_holding_list){
+		dap_holding_list_destroy(db.dap_holding_list);
+		mosquitto_FREE(db.dap_holding_list);
+	}
 
 	return MOSQ_ERR_SUCCESS;
 }
@@ -1391,6 +1436,135 @@ void db__check_acl_of_all_messages(struct mosquitto *context)
 	db__client_messages_check_acl(context, &context->msgs_out, &context->msgs_out.queued, &db__msg_remove_from_queued_stats);
 }
 
+/* Send path verification outcome. */
+enum dap_hook_result {
+	DAP_HOOK_SEND,    /* deliver normally (a matched stamp was consumed here first) */
+	DAP_HOOK_HANDLED, /* do not send this pass: dropped, bumped for re-verification, or skipped */
+};
+
+/*
+ * Just before an out publish message goes on the wire, check the DAP stamp recorded
+ * for it against the publisher/subscription's current MP and SP versions and any
+ * pending operation, and consult the client's hold state.
+ *
+ * Returns DAP_HOOK_HANDLED when the message must not be sent now: it was dropped
+ * (a DELETE applies), bumped back to the queue for re-verification (a version or op
+ * changed since stamping, and the client starts holding it), or skipped because the
+ * client is currently re-verifying a different message (skip-in-place keeps the
+ * per-topic order without moving anything). The caller then returns success.
+ *
+ * Returns DAP_HOOK_SEND to deliver normally; any matched stamp is consumed here so
+ * the topic queue stays in step with what was sent. Messages with no stamp (retained,
+ * will, non-DAP) always send. The walk over context->subs is bounded by subs_count,
+ * so it is cheap.
+ */
+static enum dap_hook_result db__dap_check_send(struct mosquitto *context, struct mosquitto__client_msg *client_msg)
+{
+	const char *client_id = context->id;
+	struct dap_holding_list *hl = db.dap_holding_list;
+	uint16_t this_mid = client_msg->data.mid;
+
+	if(!client_id || !hl){
+		return DAP_HOOK_SEND;
+	}
+
+	bool is_holding = dap_holding_list_is_holding(hl, client_id);
+	uint16_t pending_mid = is_holding ? dap_holding_list_pending_mid(hl, client_id) : 0;
+
+	/* While holding, any message that is not the re-verify candidate waits, so the
+	 * candidate keeps its place in the per-topic order. Its stamp is not at the front
+	 * of the queue right now, so this must come before trying to match a stamp. */
+	if(is_holding && this_mid != pending_mid){
+		return DAP_HOOK_HANDLED; /* SKIP: leave it in flight for a later pass */
+	}
+
+	/* Find the stamp for this message: the front of the matching topic queue on one
+	 * of this client's subscription leaves, identified by base_msg + mid. */
+	struct mosquitto__base_msg *base_msg = client_msg->base_msg;
+	const char *topic = base_msg->data.topic;
+	struct mosquitto__subleaf *leaf = NULL;
+	struct dap_stamped_msg *stamp = NULL;
+	for(int i = 0; i < context->subs_count; i++){
+		struct mosquitto__subleaf *l = context->subs[i];
+		if(!l || !l->dap_queues){
+			continue;
+		}
+		struct dap_stamped_msg *front = dap_subscription_queues_peek_front(l->dap_queues, topic);
+		if(front && front->base_msg == base_msg && front->mid == this_mid){
+			leaf = l;
+			stamp = front;
+			break;
+		}
+	}
+
+	bool has_stamp = (stamp != NULL);
+	enum dap_send_verdict verdict = DAP_SEND_PASS;
+	if(has_stamp){
+		const char *pub_id = base_msg->data.source_id;
+		const char *purpose = base_msg->data.has_purpose_filter ? base_msg->data.purpose_filter : NULL;
+		uint32_t cur_mp = mp__lookup_version(pub_id, topic);
+		uint32_t cur_sp = leaf->sp_version;
+		uint64_t op_id = 0;
+		enum dap_op_action action = dap_pending_ops_match(db.dap_pending_ops, pub_id, topic,
+				purpose, client_id, base_msg->dap_recv_time, &op_id);
+		if(is_holding){
+			/* Re-verify candidate: re-stamping under the current versions makes the
+			 * version checks pass, so only a freshly-applicable DELETE can still stop
+			 * it (a new RESTRICT is re-stamped and delivered). */
+			verdict = (action == DAP_OP_ACTION_DROP) ? DAP_SEND_DROP_DELETE : DAP_SEND_PASS;
+		}else{
+			verdict = dap_verify_for_send(stamp, cur_mp, cur_sp, action, op_id);
+		}
+	}
+
+	enum dap_send_disposition disp = dap_send_decide(has_stamp, is_holding, pending_mid, this_mid, verdict);
+
+	switch(disp){
+		case DAP_DISP_DELIVER:
+			if(has_stamp){
+				dap_stamped_msg_free(dap_subscription_queues_dequeue_front(leaf->dap_queues, topic));
+			}
+			if(is_holding){
+				/* Candidate resolved: clear the hold (no messages were parked in the
+				 * holding list itself - skip-in-place leaves them in flight). */
+				dap_holding_list_free_held(dap_holding_list_flush(hl, client_id));
+			}
+			return DAP_HOOK_SEND;
+
+		case DAP_DISP_DROP:
+			if(has_stamp){
+				dap_stamped_msg_free(dap_subscription_queues_dequeue_front(leaf->dap_queues, topic));
+			}
+			if(is_holding){
+				dap_holding_list_free_held(dap_holding_list_flush(hl, client_id));
+			}
+			/* Drop without delivering, mirroring the message-expired branch below. */
+			if(client_msg->data.direction == mosq_md_out && client_msg->data.qos > 0){
+				util__increment_send_quota(context);
+			}
+			db__message_remove_inflight(context, &context->msgs_out, client_msg);
+			return DAP_HOOK_HANDLED;
+
+		case DAP_DISP_BUMP:
+			/* Leave the stamp at the front of its topic queue for re-verification. Move
+			 * the message from in flight back to the front of the queue, reversing the
+			 * dequeue's quota decrement, and mark the client as holding it by its mid. */
+			db__msg_remove_from_inflight_stats(&context->msgs_out, client_msg);
+			DL_DELETE(context->msgs_out.inflight, client_msg);
+			util__increment_send_quota(context);
+			client_msg->data.state = mosq_ms_queued;
+			DL_PREPEND(context->msgs_out.queued, client_msg);
+			db__msg_add_to_queued_stats(&context->msgs_out, client_msg);
+			plugin_persist__handle_client_msg_update(context, client_msg);
+			dap_holding_list_start_holding(hl, client_id, this_mid);
+			return DAP_HOOK_HANDLED;
+
+		case DAP_DISP_SKIP:
+			return DAP_HOOK_HANDLED;
+	}
+	return DAP_HOOK_SEND;
+}
+
 static int db__message_write_inflight_out_single(struct mosquitto *context, struct mosquitto__client_msg *client_msg)
 {
 	struct mosquitto__base_msg *base_msg;
@@ -1430,6 +1604,18 @@ static int db__message_write_inflight_out_single(struct mosquitto *context, stru
 	payload = base_msg->data.payload;
 	subscription_id = client_msg->data.subscription_identifier;
 	base_msg_props = base_msg->data.properties;
+
+	/* Verify the message against current DAP policy just before it goes on the wire.
+	 * Gated to the publish states (QoS retransmits are in other states and flow
+	 * through untouched) and to the protection framework being on. */
+	if(db.config->use_protection_framework
+			&& (client_msg->data.state == mosq_ms_publish_qos0
+				|| client_msg->data.state == mosq_ms_publish_qos1
+				|| client_msg->data.state == mosq_ms_publish_qos2)){
+		if(db__dap_check_send(context, client_msg) == DAP_HOOK_HANDLED){
+			return MOSQ_ERR_SUCCESS;
+		}
+	}
 
 	switch(client_msg->data.state){
 		case mosq_ms_publish_qos0:

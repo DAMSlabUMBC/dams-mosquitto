@@ -381,6 +381,22 @@ struct mosquitto__subhier {
 	char topic[];
 };
 
+/* Per-subscription topic queues of version-stamped messages, hung off each leaf.
+ * Forward declared so the field can be a pointer without pulling in the header. */
+struct dap_subscription_queues;
+
+/* Broker-wide map of pending publisher operations, consulted at enqueue time.
+ * Forward declared so the db field can be a pointer without pulling in the header. */
+struct dap_pending_ops;
+
+/* Tracks pending DAP operations and their deadlines. Forward declared so the db
+ * field can be a pointer without pulling in the full header. */
+struct dap_deadline_tracker;
+
+/* Per-client hold list for messages parked while another of the client's messages
+ * is re-verified at send time. Forward declared so the db field can be a pointer. */
+struct dap_holding_list;
+
 struct mosquitto__subleaf {
 	struct mosquitto__subleaf *prev;
 	struct mosquitto__subleaf *next;
@@ -391,6 +407,8 @@ struct mosquitto__subleaf {
 	uint8_t subscription_options;
 	uint32_t purpose_filter_count;
 	char **purpose_filters;
+	uint32_t sp_version; /* DAP SP version: 1 at first subscribe with an SP, bumped when a re-subscribe changes it, 0 when no SP */
+	struct dap_subscription_queues *dap_queues; /* DAP topic queues, lazily created */
 	char topic_filter[];
 };
 
@@ -418,6 +436,9 @@ struct mosquitto__base_msg{
 	int ref_count;
 	enum mosquitto_msg_origin origin;
 	bool stored;
+	time_t dap_recv_time; /* DAP receipt timestamp: single reference time for ordering
+	                       * and operation matching, stamped once at PUBLISH receipt
+	                       * (only when use_protection_framework is on; 0 otherwise). */
 };
 
 struct mosquitto__client_msg{
@@ -510,6 +531,9 @@ struct mosquitto_db{
 	int kqueuefd;
 #endif
 	struct mosquitto__message_v5 *plugin_msgs;
+	struct dap_pending_ops *dap_pending_ops; /* DAP pending-operation map */
+	struct dap_deadline_tracker *dap_deadline_tracker; /* DAP operation deadline tracker */
+	struct dap_holding_list *dap_holding_list; /* DAP per-client send-path hold list */
 #ifdef WITH_TLS
 	char *tls_keylog; /* This can't be in the config struct because it is used
 						 before the config is allocated. Config probably

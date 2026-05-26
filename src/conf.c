@@ -2503,6 +2503,10 @@ static int config__read_file_core(struct mosquitto__config *config, bool reload,
 					}
 					config->purpose_filtering = true;
 					config->purpose_filter_method = tmp_int;
+					if(tmp_int == MOSQ_DAP_TOPIC_REG){
+						log__printf(NULL, MOSQ_LOG_WARNING,
+							"Warning: purpose_filtering_method=3 (registration by topic): subscriber-side SP registration by topic is no longer supported. Publisher MP registration by topic ($DAP/MP_reg/) still works, but subscribers receive no purpose filtering under this method.");
+					}
 				}else if(!strcmp(token, "use_metadata_operation_support")){
 					if(conf__parse_bool(&token, token, &config->metadata_operation_handling, &saveptr)) return MOSQ_ERR_INVAL;
 				}else if(!strcmp(token, "use_protection_framework")){

@@ -147,3 +147,10 @@ obj-*/
 
 # Others
 tmp/
+Untitled.mov
+
+# test/broker runtime scratch (generated configs, persistence/dynsec state dirs)
+test/broker/*.conf
+!test/broker/03-publish-qos1-queued-bytes.conf
+test/broker/[0-9][0-9][0-9][0-9]/
+test/broker/*.pw
