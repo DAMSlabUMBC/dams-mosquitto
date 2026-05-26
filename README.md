@@ -1,7 +1,6 @@
-MQTT-DAP: Data Protection Extension for Eclipse Mosquitto
-==========================================================
+# MQTT-DAP-Mosquitto
 
-This repository contains a modified implementation of Eclipse Mosquitto that implements **MQTT-DAP (MQTT for Data Protection)**, a framework for extending the MQTT protocol to facilitate the protection of sensitive data in IoT systems.
+A modified implementation of Eclipse Mosquitto that implements **MQTT-DAP (MQTT for Data Protection)**, a framework extending the MQTT protocol to facilitate the protection of sensitive data in IoT systems.
 
 ## About MQTT-DAP
 
@@ -58,11 +57,24 @@ and 3.1 of the MQTT protocol. It also includes a C and C++ client library, and
 the `mosquitto_pub` and `mosquitto_sub` utilities for publishing and
 subscribing.
 
+## Testing MQTT-DAP-Mosquitto
+
+For comprehensive testing and evaluation of MQTT-DAP-Mosquitto, use the [MQTT-DAP Benchmark](https://anonymous.4open.science/r/Submission-1074-MQTT-DAP-Benchmark/) framework.
+
+The benchmark provides:
+- Automated testing across all purpose management methods (PM0-PM4)
+- Performance metrics (latency, throughput, CPU, memory)
+- Correctness verification for purpose-based access control
+- Operational request testing for GDPR compliance
+- Realistic IoT workload simulation
+
+**We strongly recommend using the benchmark framework to test MQTT-DAP-Mosquitto** rather than manual testing, as it ensures consistent and reproducible results.
+
 ## Links
 
 ### MQTT-DAP Resources
 
-- Research paper: "MQTT-DAP: A Data Protection Extension of the MQTT Protocol" 
+- Benchmark framework: [MQTT-DAP Benchmark](https://anonymous.4open.science/r/Submission-1074-MQTT-DAP-Benchmark/)
 
 ### MQTT Protocol Information
 
@@ -75,42 +87,41 @@ subscribing.
 - Source code repository: <https://github.com/eclipse/mosquitto>
 - Bug tracker: <https://github.com/eclipse/mosquitto/issues>
 
-## Installing
+## Building and Installing
 
-See <https://mosquitto.org/download/> for details on installing binaries for
-various platforms.
+MQTT-DAP-Mosquitto must be built from source. See the [Building from source](#building-from-source) section below.
 
-## Quick start
+## Quick Start
 
-If you have installed a binary package the broker should have been started
-automatically. If not, it can be started with a very basic configuration:
+After building, start the broker with a configuration file:
 
-    mosquitto
+```bash
+mosquitto -c /path/to/mosquitto.conf
+```
 
-Then use `mosquitto_sub` to subscribe to a topic:
+### Manual Testing with MQTT-DAP User Properties
 
-    mosquitto_sub -t 'test/topic' -v
+For quick manual testing, you can use `mosquitto_sub` and `mosquitto_pub`:
 
-And to publish a message:
+Subscribe with a purpose filter:
+```bash
+mosquitto_sub -t 'sensors/temperature' \
+  -D subscribe user-property DAP-SP "billing/electricity:sensors/temperature" -v
+```
 
-    mosquitto_pub -t 'test/topic' -m 'hello world'
+Publish with purpose metadata:
+```bash
+mosquitto_pub -t 'sensors/temperature' -m '22.5' \
+  -D publish user-property DAP-MP "billing/electricity" \
+  -D publish user-property DAP-ClientID "sensor-01" \
+  -D publish user-property DAP-Allow "1"
+```
 
-Note that starting the broker like this allows anonymous/unauthenticated access
-but only from the local computer, so it's only really useful for initial testing.
+The subscriber will receive the message because their purpose (`billing/electricity`) matches the publisher's allowed purpose.
 
-If you want to have clients from another computer connect, you will need to
-provide a configuration file. If you have installed from a binary package, you
-will probably already have a configuration file at somewhere like
-`/etc/mosquitto/mosquitto.conf`. If you've compiled from source, you can write
-your config file then run as `mosquitto -c /path/to/mosquitto.conf`.
+**For comprehensive testing**, use the [MQTT-DAP Benchmark](https://github.com/DAMSlabUMBC/Pub-Sub-Privacy) framework instead of manual testing.
 
-To start your config file you define a listener and you will need to think
-about what authentication you require. It is not advised to run your broker
-with anonymous access when it is publically available.
-
-For details on how to do this, look at the
-[authentication methods](https://mosquitto.org/documentation/authentication-methods/)
-available and the [dynamic security plugin](https://mosquitto.org/documentation/dynamic-security/).
+**Note:** Configure appropriate authentication before deploying. Anonymous access should only be used for testing.
 
 ## Documentation
 
@@ -122,33 +133,60 @@ description of the configuration file options available for the broker.
 
 Detailed client library API documentation can be found at <https://mosquitto.org/api/>
 
-## Building from source
+## Building from Source
 
-To build from source the recommended route for end users is to download the
-archive from <https://mosquitto.org/download/>.
+Clone this repository:
 
-On Windows and Mac, use `cmake` to build. On other platforms, just run `make`
-to build. For Windows, see also `README-windows.md`.
+```bash
+git clone https://github.com/DAMSlabUMBC/dams-mosquitto.git
+cd dams-mosquitto
+```
 
-If you are building from the git repository then the documentation will not
-already be built. Use `make binary` to skip building the man pages, or install
-`docbook-xsl` on Debian/Ubuntu systems.
+### Option 1: Build with Docker (Recommended)
+
+The simplest way to build and run MQTT-DAP-Mosquitto:
+
+```bash
+docker build -t mqtt-dap-mosquitto .
+docker run -p 1883:1883 -p 9100:9100 mqtt-dap-mosquitto
+```
+
+This builds the broker with all dependencies and includes node_exporter for metrics collection on port 9100.
+
+### Option 2: Build Locally
+
+**Linux/Unix:**
+```bash
+make
+sudo make install
+```
+
+**Windows and Mac:**
+```bash
+cmake .
+make
+```
+
+**Note:** If building from git, documentation may not be included. Use `make binary` to skip man pages, or install `docbook-xsl` (Debian/Ubuntu) to build them.
 
 ### Build Dependencies
 
-* c-ares (libc-ares-dev on Debian based systems) - only when compiled with `make WITH_SRV=yes`
-* cJSON - required for dynsec plugin, broker control plugin, and for client JSON output support.
-* libwebsockets (libwebsockets-dev) - enable with `make WITH_WEBSOCKETS=lws`
-* openssl (libssl-dev on Debian based systems) - disable with `make WITH_TLS=no`
-* pthreads - for client library thread support. This is required to support the
-  `mosquitto_loop_start()` and `mosquitto_loop_stop()` functions. If compiled
-  without pthread support, the library isn't guaranteed to be thread safe.
-* uthash / utlist - bundled versions of these headers are provided, disable their use with `make WITH_BUNDLED_DEPS=no`
-* xsltproc (xsltproc and docbook-xsl on Debian based systems) - only needed when building from git sources - disable with `make WITH_DOCS=no`
+**MQTT-DAP-Mosquitto specific:**
+* libargon2 (libargon2-dev on Debian/Ubuntu) - required for purpose management
+* libsqlite3 (libsqlite3-dev on Debian/Ubuntu) - required for data storage
 
-Equivalent options for enabling/disabling features are available when using the CMake build.
+**Standard Mosquitto dependencies:**
+* c-ares (libc-ares-dev) - only when compiled with `make WITH_SRV=yes`
+* cJSON - required for dynsec plugin, broker control plugin, and client JSON output support
+* libwebsockets (libwebsockets-dev) - enable with `make WITH_WEBSOCKETS=lws`
+* openssl (libssl-dev) - disable with `make WITH_TLS=no`
+* pthreads - for client library thread support
+* uthash / utlist - bundled versions provided, disable with `make WITH_BUNDLED_DEPS=no`
+* xsltproc and docbook-xsl - only needed when building from git sources, disable with `make WITH_DOCS=no`
+
+Equivalent options for enabling/disabling features are available when using CMake.
 
 
 ## Credits
 
-Mosquitto was written by Roger Light <roger@atchoo.org>
+The original version of Mosquitto was written by Roger Light <roger@atchoo.org>

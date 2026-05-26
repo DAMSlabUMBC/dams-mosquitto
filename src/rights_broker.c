@@ -280,7 +280,6 @@ struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub
         if(is_sub_online(sub_list->sub_id)){
             char ors_topic[256];
             snprintf(ors_topic, sizeof(ors_topic), "%s/%s", MOSQ_DAP_TOPIC_ORS, sub_list->sub_id);
-            response_topic = ors_topic;
 
             mosquitto_property *props = NULL;
             mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
@@ -308,7 +307,11 @@ struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub
                 mosquitto_property_add_binary(&props, MQTT_PROP_CORRELATION_DATA, correlation_data, correlation_data_len);
             }
 
-            db__messages_easy_queue_with_purpose(NULL, mosquitto_strdup(response_topic), MOSQ_DAP_OP_PURPOSE, msg_data->qos, msg_data->payloadlen, msg_data->payload, msg_data->retain, msg_data->expiry_time, &props);
+            if(response_topic){
+                mosquitto_property_add_string(&props, MQTT_PROP_RESPONSE_TOPIC, response_topic);
+            }
+
+            db__messages_easy_queue_with_purpose(NULL, mosquitto_strdup(ors_topic), MOSQ_DAP_OP_PURPOSE, msg_data->qos, msg_data->payloadlen, msg_data->payload, msg_data->retain, msg_data->expiry_time, &props);
         } else {
             struct subscriber_list *off = mosquitto_calloc(1, sizeof(*off));
             off->sub_id = mosquitto_strdup(sub_list->sub_id);
@@ -330,7 +333,7 @@ struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub
  * unreached clients when the deadline passes. */
 void broker_dispatch_pending_operation(const char *publisher_id, const char *operation,
     uint64_t op_id, struct dr_sublist *relevant, struct mosquitto_base_msg *msg_data,
-    char *op_info, char *correlation_data, uint16_t correlation_data_len, time_t deadline)
+    char *response_topic, char *op_info, char *correlation_data, uint16_t correlation_data_len, time_t deadline)
 {
     if(!publisher_id) return;
 
@@ -368,7 +371,7 @@ void broker_dispatch_pending_operation(const char *publisher_id, const char *ope
 
     /* (1) Forward to the online relevant subs; discard the offline list - the tracker,
      * not an immediate failure, now owns the "didn't reach them" outcome. */
-    struct subscriber_list *offline = forward_request_to_connected(fwd, msg_data, NULL,
+    struct subscriber_list *offline = forward_request_to_connected(fwd, msg_data, response_topic,
         (char *)operation, op_info, correlation_data, correlation_data_len, op_id);
     while(fwd){
         struct subscriber_list *t = fwd->next;

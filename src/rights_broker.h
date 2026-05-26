@@ -34,7 +34,7 @@ void broker_send_response_failure(const char *publisher_id, const char *operatio
  * op id + deadline back to the requester. The relevant list is borrowed, not freed. */
 void broker_dispatch_pending_operation(const char *publisher_id, const char *operation,
     uint64_t op_id, struct dr_sublist *relevant, struct mosquitto_base_msg *msg_data,
-    char *op_info, char *correlation_data, uint16_t correlation_data_len, time_t deadline);
+    char *response_topic, char *op_info, char *correlation_data, uint16_t correlation_data_len, time_t deadline);
 
 /* Deadline-expiry notification: tell the requester on ONP that op_id expired with
  * the given unresponded subscriber ids (DAP-Status=Failure, DAP-OpId, DAP-UnreachedClients). */

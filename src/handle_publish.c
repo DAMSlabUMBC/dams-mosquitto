@@ -699,7 +699,7 @@ int handle__publish(struct mosquitto *context)
 						 * and the status path, not synchronously here. */
 						time_t deadline = stored->dap_recv_time + MOSQ_DAP_DEFAULT_DEADLINE_SECS;
 						broker_dispatch_pending_operation(context->id, op_id, pending_op_id,
-								relevant, &stored->data, op_info,
+								relevant, &stored->data, response_topic, op_info,
 								correlation_data, correlation_data_len, deadline);
 						dr__free_sublist(relevant);
 
@@ -711,9 +711,9 @@ int handle__publish(struct mosquitto *context)
 					}
 					else
 					{
-						/* Non-pending rights: unchanged immediate forward + Success/Failure. */
+						/* Non-pending rights: immediate forward + Success/Failure. */
 						subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
-						subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, NULL, op_id, op_info, correlation_data, correlation_data_len, 0);
+						subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, response_topic, op_id, op_info, correlation_data, correlation_data_len, 0);
 						if(offline){
 							broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Subscriber not connected", offline);
 						}
