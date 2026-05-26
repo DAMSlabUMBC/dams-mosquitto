@@ -144,6 +144,12 @@ int dap_pending_ops_insert_operation(struct dap_pending_ops *map,
     return 0;
 }
 
+uint64_t dap_pending_ops_allocate_op_id(struct dap_pending_ops *map)
+{
+    if(!map) return 0;
+    return map->next_op_id++;
+}
+
 struct dap_pending_op *dap_pending_ops_lookup_operations_for_publisher(struct dap_pending_ops *map,
                                                                        const char *pub_id)
 {

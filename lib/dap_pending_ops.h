@@ -79,6 +79,14 @@ int dap_pending_ops_insert_operation(struct dap_pending_ops *map,
                                      const char *subscriber_filter,
                                      uint64_t *op_id_out);
 
+/*
+ * Hand out the next broker-assigned op id from the same counter insert uses, without
+ * storing anything. For subscriber-involving operations that need a unique id and a
+ * deadline-tracker entry but no in-flight match entry (HISTORY/UPDATE). Returns 0 if
+ * map is NULL.
+ */
+uint64_t dap_pending_ops_allocate_op_id(struct dap_pending_ops *map);
+
 /* Returns the head of the pending-operation list for pub_id, or NULL if none. */
 struct dap_pending_op *dap_pending_ops_lookup_operations_for_publisher(struct dap_pending_ops *map,
                                                                        const char *pub_id);

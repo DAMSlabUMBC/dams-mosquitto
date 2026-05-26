@@ -138,6 +138,7 @@ OBJS_EXTERNAL= \
 		dap_pending_ops.o \
 		dap_op_request.o \
 		dap_timestamp.o \
+		dap_topics.o \
 		dap_stamp.o \
 		send_connect.o \
 		send_disconnect.o \
@@ -229,6 +230,9 @@ dap_op_request.o : ${R}/lib/dap_op_request.c ${R}/lib/dap_op_request.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
 dap_timestamp.o : ${R}/lib/dap_timestamp.c ${R}/lib/dap_timestamp.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+dap_topics.o : ${R}/lib/dap_topics.c ${R}/lib/dap_topics.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
 dap_stamp.o : ${R}/lib/dap_stamp.c ${R}/lib/dap_stamp.h

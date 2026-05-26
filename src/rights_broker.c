@@ -4,10 +4,12 @@
 #include "rights_broker.h"
 #include "mosquitto_broker_internal.h" 
 #include "util_mosq.h"
+#include "property_common.h"
 #include "property_mosq.h"
 #include "send_mosq.h"
 #include "dr_registry.h"
 #include "dap_deadline_tracker.h"
+#include "dap_op_requester.h"
 
 /* Finds a client context by ID by calling db__find_context_by_id(). */
 struct mosquitto *broker_find_context_by_id(const char *client_id)
@@ -303,6 +305,27 @@ struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub
                     MOSQ_DAP_OP_ID_KEY, opid_buf);
             }
 
+            /* Propagate the broker's receipt timestamp (paper 3.3) onto the forwarded
+             * request so subscribers share the same reference time the operation is
+             * scoped against. It was stamped onto the message's properties at PUBLISH
+             * receipt (handle_publish.c); copy that value here, since the forwarder has
+             * only the message, not the store entry that carries dap_recv_time. */
+            if(msg_data->properties){
+                const mosquitto_property *p = msg_data->properties;
+                char *pn = NULL, *pv = NULL;
+                while((p = mosquitto_property_read_string_pair(p, MQTT_PROP_USER_PROPERTY, &pn, &pv, false)) != NULL){
+                    bool is_ts = (pn && !strcmp(pn, MOSQ_DAP_TIMESTAMP_KEY) && pv);
+                    if(is_ts){
+                        mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+                            MOSQ_DAP_TIMESTAMP_KEY, pv);
+                    }
+                    mosquitto_FREE(pn);
+                    mosquitto_FREE(pv);
+                    if(is_ts) break;
+                    p = p->next;
+                }
+            }
+
             if(correlation_data){
                 mosquitto_property_add_binary(&props, MQTT_PROP_CORRELATION_DATA, correlation_data, correlation_data_len);
             }
@@ -342,12 +365,14 @@ void broker_dispatch_pending_operation(const char *publisher_id, const char *ope
     size_t n = 0;
     for(struct dr_sublist *s = relevant; s; s = s->next) n++;
 
-    /* No subscriber ever received matching data from this publisher, so there is
-     * nothing to wait for: settle the op immediately as Success rather than echoing
-     * Pending and letting it expire silently. The requester correlates via
-     * correlation data, like the immediate-success rights. */
+    /* Paper 5.3: "If no relevant subscriptions are identified, the broker sends a
+     * failure message to the requester." No subscriber ever received matching data
+     * from this publisher, so the operation cannot be carried out - reject it rather
+     * than echoing Pending (which would silently expire) or Success. The requester
+     * correlates via correlation data, like the other immediate responses. */
     if(n == 0){
-        broker_send_response_success(publisher_id, operation, correlation_data, correlation_data_len, NULL, NULL);
+        broker_send_response_failure(publisher_id, operation, correlation_data, correlation_data_len,
+            "No relevant subscribers found.", NULL);
         return;
     }
 
@@ -394,6 +419,12 @@ void broker_dispatch_pending_operation(const char *publisher_id, const char *ope
             publisher_id, ids, ids ? n : 0, deadline);
     }
     mosquitto_FREE(ids);
+
+    /* Remember who requested this op id so an inbound status notification - even one
+     * that arrives after the deadline has passed - can be routed back to the requester. */
+    if(db.dap_op_requester){
+        dap_op_requester_record(db.dap_op_requester, op_id, publisher_id);
+    }
 
     /* (3) Echo the validated request back to the requester with op id + deadline. */
     broker_send_response_pending(publisher_id, operation, op_id, correlation_data, correlation_data_len, deadline);
@@ -479,5 +510,50 @@ void broker_send_deadline_success(uint64_t op_id, const char *publisher_id)
         MOSQ_DAP_REASON_KEY, "All subscribers responded");
 
     db__messages_easy_queue_with_purpose(NULL, onp_topic, MOSQ_DAP_OP_PURPOSE, 0, 0, NULL, false, 0, &props);
+    mosquitto_property_free_all(&props);
+}
+
+/* Forward a subscriber's status notification to the requester on ONP/<requester_id>.
+ * The broker relays the responding subscriber's id, op id, status, reason and any
+ * payload/correlation data so the requester sees each response as it arrives. */
+void broker_forward_status_to_requester(const char *requester_id, const char *operation,
+    uint64_t op_id, const char *status, const char *reason, const char *responder_id,
+    const void *payload, uint32_t payloadlen, const char *corr_data, uint16_t corr_len)
+{
+    if(!requester_id || !status) return;
+    char onp_topic[256];
+    snprintf(onp_topic, sizeof(onp_topic), "%s/%s", MOSQ_DAP_TOPIC_ONP, requester_id);
+
+    mosquitto_property *props = NULL;
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_CONSENT_KEY, "1");
+
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_ID_KEY, responder_id ? responder_id : "");
+
+    if(operation){
+        mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+            MOSQ_DAP_OP_KEY, operation);
+    }
+
+    char opid_buf[32];
+    snprintf(opid_buf, sizeof(opid_buf), "%llu", (unsigned long long)op_id);
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_OP_ID_KEY, opid_buf);
+
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+        MOSQ_DAP_STATUS_KEY, status);
+
+    if(reason){
+        mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
+            MOSQ_DAP_REASON_KEY, reason);
+    }
+
+    if(corr_data){
+        mosquitto_property_add_binary(&props, MQTT_PROP_CORRELATION_DATA, corr_data, corr_len);
+    }
+
+    db__messages_easy_queue_with_purpose(NULL, onp_topic, MOSQ_DAP_OP_PURPOSE, 0,
+        payloadlen, payload, false, 0, &props);
     mosquitto_property_free_all(&props);
 }

@@ -111,6 +111,29 @@ bool dap_deadline_tracker_is_tracked(struct dap_deadline_tracker *t, uint64_t op
     return dap__find_op(t, op_id) != NULL;
 }
 
+bool dap_deadline_tracker_all_responded(struct dap_deadline_tracker *t, uint64_t op_id)
+{
+    if(!t) return false;
+    struct dap_tracked_op *op = dap__find_op(t, op_id);
+    if(!op) return false;
+
+    struct dap_expected_sub *sub;
+    DL_FOREACH(op->expected, sub){
+        if(!sub->responded) return false;
+    }
+    return true;
+}
+
+int dap_deadline_tracker_remove(struct dap_deadline_tracker *t, uint64_t op_id)
+{
+    if(!t) return 1;
+    struct dap_tracked_op *op = dap__find_op(t, op_id);
+    if(!op) return 1;
+    HASH_DEL(t->operations, op);
+    dap__free_op(op);
+    return 0;
+}
+
 /* Build a result node holding the op's id, publisher, and unresponded subscribers. */
 static struct dap_expired_op *dap__build_expired(struct dap_tracked_op *op)
 {

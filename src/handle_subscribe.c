@@ -29,9 +29,10 @@ Contributors:
 #include "property_mosq.h"
 #include "ri_registry.h" 
 #include "dr_registry.h" 
-#include "rights_registry.h" 
-#include "rights_broker.h" 
+#include "rights_registry.h"
+#include "rights_broker.h"
 #include "purpose_filters.h"
+#include "dap_topics.h"
 
 int handle__subscribe(struct mosquitto *context)
 {
@@ -52,6 +53,9 @@ int handle__subscribe(struct mosquitto *context)
 	/* Purpose filtering (MQTT v5 only) */
 	uint32_t purpose_filter_count = 0;
 	char* purpose_filters[MOSQ_DAP_MAX_FILTERS_PER_SUB];
+	/* MQTT-DAP (paper 4.3): did this v5 packet declare an SP? User properties are
+	 * packet-scoped in MQTT v5, so this is a packet-level fact applied per subscription. */
+	bool has_sp = false;
 
 	if(!context) return MOSQ_ERR_INVAL;
 
@@ -183,6 +187,24 @@ int handle__subscribe(struct mosquitto *context)
 			}
 		}
 		
+		/* MQTT-DAP (paper 4.3): record whether the packet carries an SP declaration.
+		 * Independent of the purpose-filtering method above, so it also covers
+		 * TOPIC_REG and framework-on-without-purpose-filtering configs. The
+		 * per-subscription requirement (with op-system-topic exemptions) is enforced
+		 * in the topic loop below. */
+		if(db.config->use_protection_framework){
+			const mosquitto_property *sp_scan = properties;
+			char *sp_name = NULL, *sp_value = NULL;
+			while((sp_scan = mosquitto_property_read_string_pair(sp_scan, MQTT_PROP_USER_PROPERTY, &sp_name, &sp_value, false)) != NULL){
+				if(sp_name && !strcmp(sp_name, MOSQ_DAP_SP_KEY)){
+					has_sp = true;
+				}
+				mosquitto_FREE(sp_name);
+				mosquitto_FREE(sp_value);
+				sp_scan = sp_scan->next;
+			}
+		}
+
 		mosquitto_property_free_all(&properties);
 		/* Note - User Property not handled */
 	}
@@ -275,6 +297,42 @@ int handle__subscribe(struct mosquitto *context)
 				mosquitto_FREE(sub.topic_filter);
 				sub.topic_filter = sub_mount;
 
+			}
+
+			/* MQTT-DAP subscribe-time policy. Gated on the protection framework so
+			 * non-DAP deployments and the existing test-suite are unaffected. On
+			 * violation the SUBSCRIBE is malformed and the connection is dropped. */
+			if(db.config->use_protection_framework)
+			{
+				/* Paper 5.1: keyed topics may only be subscribed by the client they are
+				 * keyed to. ORS/<sub> is a subscriber's operation-request inbox and
+				 * ONP/<pub> a publisher's notification inbox. */
+				const char *keyed_id = NULL;
+				if(!strncmp(sub.topic_filter, MOSQ_DAP_TOPIC_ORS "/", strlen(MOSQ_DAP_TOPIC_ORS) + 1)){
+					keyed_id = sub.topic_filter + strlen(MOSQ_DAP_TOPIC_ORS) + 1;
+				}else if(!strncmp(sub.topic_filter, MOSQ_DAP_TOPIC_ONP "/", strlen(MOSQ_DAP_TOPIC_ONP) + 1)){
+					keyed_id = sub.topic_filter + strlen(MOSQ_DAP_TOPIC_ONP) + 1;
+				}
+				if(keyed_id && (!context->id || strcmp(keyed_id, context->id) != 0)){
+					log__printf(NULL, MOSQ_LOG_INFO,
+						"Subscription from %s to keyed topic %s does not match the client id, rejecting.",
+						context->id, sub.topic_filter);
+					mosquitto_FREE(sub.topic_filter);
+					mosquitto_FREE(payload);
+					return MOSQ_ERR_MALFORMED_PACKET;
+				}
+
+				/* Paper 4.3: every data subscription must declare an SP. Operation-system
+				 * topics ($OSYS, $DAP/* control, the keyed inboxes, OR/ON) are exempt.
+				 * SP is an MQTT v5 user property, so the requirement applies to v5 only. */
+				if(context->protocol == mosq_p_mqtt5 && !has_sp && !dap_is_op_system_topic(sub.topic_filter)){
+					log__printf(NULL, MOSQ_LOG_INFO,
+						"Subscription from %s to %s lacks a DAP-SP declaration, rejecting.",
+						context->id, sub.topic_filter);
+					mosquitto_FREE(sub.topic_filter);
+					mosquitto_FREE(payload);
+					return MOSQ_ERR_MALFORMED_PACKET;
+				}
 			}
 
 			/* Setup purpose filters */

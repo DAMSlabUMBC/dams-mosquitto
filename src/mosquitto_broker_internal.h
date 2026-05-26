@@ -397,6 +397,11 @@ struct dap_deadline_tracker;
  * is re-verified at send time. Forward declared so the db field can be a pointer. */
 struct dap_holding_list;
 
+/* Maps op id to requesting publisher, so status notifications can be routed back to
+ * the requester even after the operation stops being tracked. Forward declared so the
+ * db field can be a pointer. */
+struct dap_op_requester;
+
 struct mosquitto__subleaf {
 	struct mosquitto__subleaf *prev;
 	struct mosquitto__subleaf *next;
@@ -534,6 +539,7 @@ struct mosquitto_db{
 	struct dap_pending_ops *dap_pending_ops; /* DAP pending-operation map */
 	struct dap_deadline_tracker *dap_deadline_tracker; /* DAP operation deadline tracker */
 	struct dap_holding_list *dap_holding_list; /* DAP per-client send-path hold list */
+	struct dap_op_requester *dap_op_requester; /* DAP op id -> requesting publisher */
 #ifdef WITH_TLS
 	char *tls_keylog; /* This can't be in the config struct because it is used
 						 before the config is allocated. Config probably

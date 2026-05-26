@@ -178,9 +178,10 @@ static void dap_deadline__check(void)
 			broker_send_deadline_failure(e->op_id, e->publisher_id, e->unresponded_subs, e->num_unresponded);
 		}else{
 			/* Every relevant subscriber responded before the deadline: Success.
-			 * Dormant until an inbound status path marks subscribers responded; until
-			 * then num_unresponded is never 0 for a tracked op (zero-sub ops settle
-			 * immediately in broker_dispatch_pending_operation and are never tracked). */
+			 * A fully-responded op is normally settled and removed the moment its last
+			 * response arrives (handle_dap_status_notification), so this is a fallback
+			 * for any tracked op that still reaches its deadline with nothing
+			 * outstanding. */
 			broker_send_deadline_success(e->op_id, e->publisher_id);
 		}
 	}

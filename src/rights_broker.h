@@ -45,6 +45,13 @@ void broker_send_deadline_failure(uint64_t op_id, const char *publisher_id,
  * every relevant subscriber responded before the deadline (DAP-Status=Success, DAP-OpId). */
 void broker_send_deadline_success(uint64_t op_id, const char *publisher_id);
 
+/* Forward a subscriber's status notification (success/failure/pending) to the
+ * requester on ONP/<requester_id>, preserving DAP-OpId, DAP-Status, DAP-Reason and
+ * the responding subscriber id (DAP-ClientID), plus any payload/correlation data. */
+void broker_forward_status_to_requester(const char *requester_id, const char *operation,
+    uint64_t op_id, const char *status, const char *reason, const char *responder_id,
+    const void *payload, uint32_t payloadlen, const char *corr_data, uint16_t corr_len);
+
 /* For enumerating who got the publisher's data (C1). */
 struct subscription_list *find_subscriptions_for_publisher(const char *publisher_id);
 

@@ -62,7 +62,9 @@ add_executable(mosquitto
 	../lib/dap_pending_ops.c ../lib/dap_pending_ops.h
 	../lib/dap_op_request.c ../lib/dap_op_request.h
 	../lib/dap_deadline_tracker.c ../lib/dap_deadline_tracker.h
+	../lib/dap_op_requester.c ../lib/dap_op_requester.h
 	../lib/dap_timestamp.c ../lib/dap_timestamp.h
+	../lib/dap_topics.c ../lib/dap_topics.h
 	../lib/dap_stamp.c ../lib/dap_stamp.h
 	../lib/dap_send_verify.c ../lib/dap_send_verify.h
 	../lib/dap_holding_list.c ../lib/dap_holding_list.h

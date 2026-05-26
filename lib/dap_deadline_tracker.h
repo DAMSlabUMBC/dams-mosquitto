@@ -87,6 +87,20 @@ int dap_deadline_tracker_mark_subscriber_responded(struct dap_deadline_tracker *
 bool dap_deadline_tracker_is_tracked(struct dap_deadline_tracker *t, uint64_t op_id);
 
 /*
+ * True when op_id is tracked and every expected subscriber has responded. Lets the
+ * status path settle an operation as soon as the last response arrives, instead of
+ * waiting for the deadline sweep. False for an untracked op.
+ */
+bool dap_deadline_tracker_all_responded(struct dap_deadline_tracker *t, uint64_t op_id);
+
+/*
+ * Stop tracking op_id without going through expiry, freeing it. Used once the status
+ * path has settled an operation so the deadline sweep cannot report it again. Returns
+ * 0 if it was tracked and removed, non-zero otherwise.
+ */
+int dap_deadline_tracker_remove(struct dap_deadline_tracker *t, uint64_t op_id);
+
+/*
  * Sweep the tracker for operations whose deadline has been reached (deadline <=
  * now), returning them as a singly-linked list and removing them from tracking.
  * Each returned op carries the ids of its unresponded subscribers (empty when all

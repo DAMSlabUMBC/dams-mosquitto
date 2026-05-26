@@ -225,6 +225,52 @@ static void test_destroy_cleans_everything(void)
     printf("ok - destroy frees all operations and stays reusable\n");
 }
 
+static void test_all_responded_predicate(void)
+{
+    struct dap_deadline_tracker t;
+    dap_deadline_tracker_init(&t);
+
+    const char *subs[] = {"sub/a", "sub/b"};
+    dap_deadline_tracker_register_pending_operation(&t, 1, "pub/x", subs, 2, 100);
+
+    /* False while any expected subscriber is still unresponded. */
+    assert(dap_deadline_tracker_all_responded(&t, 1) == false);
+    dap_deadline_tracker_mark_subscriber_responded(&t, 1, "sub/a");
+    assert(dap_deadline_tracker_all_responded(&t, 1) == false);
+    dap_deadline_tracker_mark_subscriber_responded(&t, 1, "sub/b");
+    assert(dap_deadline_tracker_all_responded(&t, 1) == true);
+
+    /* An untracked op is not "all responded". */
+    assert(dap_deadline_tracker_all_responded(&t, 99) == false);
+
+    dap_deadline_tracker_destroy(&t);
+    printf("ok - all_responded is true only once every expected subscriber responded\n");
+}
+
+static void test_remove_stops_tracking(void)
+{
+    struct dap_deadline_tracker t;
+    dap_deadline_tracker_init(&t);
+
+    const char *subs[] = {"sub/a"};
+    dap_deadline_tracker_register_pending_operation(&t, 1, "pub/x", subs, 1, 100);
+    assert(dap_deadline_tracker_is_tracked(&t, 1) == true);
+
+    /* Removing a tracked op succeeds and stops tracking it. */
+    assert(dap_deadline_tracker_remove(&t, 1) == 0);
+    assert(dap_deadline_tracker_is_tracked(&t, 1) == false);
+
+    /* It no longer expires (the sweep must not double-report it). */
+    assert(dap_deadline_tracker_check_expired(&t, 1000) == NULL);
+
+    /* Removing an untracked op is a no-op failure. */
+    assert(dap_deadline_tracker_remove(&t, 1) != 0);
+    assert(dap_deadline_tracker_remove(NULL, 1) != 0);
+
+    dap_deadline_tracker_destroy(&t);
+    printf("ok - remove stops tracking so the deadline sweep cannot re-report it\n");
+}
+
 int main(void)
 {
     test_register_makes_op_tracked();
@@ -235,6 +281,8 @@ int main(void)
     test_fully_responded_op_expires_with_empty_list();
     test_operations_independent();
     test_destroy_cleans_everything();
+    test_all_responded_predicate();
+    test_remove_stops_tracking();
     printf("\nAll dap_deadline_tracker tests passed.\n");
     return 0;
 }

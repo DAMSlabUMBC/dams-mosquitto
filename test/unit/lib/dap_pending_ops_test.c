@@ -228,10 +228,31 @@ static void test_remove_operation(void)
     printf("ok - remove_operation_by_id unlinks ops and cleans up empty publishers\n");
 }
 
+static void test_allocate_op_id_shares_counter(void)
+{
+    struct dap_pending_ops map;
+    uint64_t inserted = 0;
+
+    dap_pending_ops_init(&map);
+
+    /* allocate_op_id hands out ids from the same monotonic counter as insert, so
+     * operations that do not enter the map (HISTORY/UPDATE) never collide with
+     * DELETE/RESTRICT op ids. */
+    assert(dap_pending_ops_allocate_op_id(&map) == 1);
+    assert(dap_pending_ops_insert_operation(&map, "pub1", DAP_OP_DELETE, 100, "*", "*", "*", &inserted) == 0);
+    assert(inserted == 2);
+    assert(dap_pending_ops_allocate_op_id(&map) == 3);
+    assert(dap_pending_ops_allocate_op_id(NULL) == 0);
+
+    dap_pending_ops_destroy(&map);
+    printf("ok - allocate_op_id shares the insert counter\n");
+}
+
 int main(void)
 {
     test_empty_map();
     test_insert_assigns_increasing_ids();
+    test_allocate_op_id_shares_counter();
     test_enqueue_time_gate();
     test_only_requesting_publisher();
     test_filters_must_match();

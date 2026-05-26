@@ -143,7 +143,7 @@ enum mosq_transport_t {
 #define MOSQ_DAP_TOPIC_OSYS "$OSYS"  
 #define MOSQ_DAP_TOPIC_ON "ON"    
 #define MOSQ_DAP_TOPIC_ONP "ONP"  
-#define MOSQ_DAP_OP_PURPOSE "DAP_op"    
+#define MOSQ_DAP_OP_PURPOSE "DAP_OP"    /* paper 5.1: operation-processing consent value (was "DAP_op") */
 #define MOSQ_DAP_MAX_FILTERS_PER_SUB 100
 #define MOSQ_DAP_WAIT_SECS_FOR_UNREACHED_CLIENTS 0
 #define MOSQ_DAP_DEFAULT_DEADLINE_SECS 30 /* operation deadline = receipt time + this; TODO make configurable */
