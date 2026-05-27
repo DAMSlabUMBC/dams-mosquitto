@@ -214,6 +214,40 @@ int handle__publish(struct mosquitto *context)
 		/* Only run the below if using the framework */
 		if(db.config->use_protection_framework)
 		{
+			/* MQTT v5 allows a zero-length PUBLISH topic when a Topic Alias is
+			 * supplied; the real topic is resolved from the alias. Upstream does that
+			 * resolution further down (after this block), but the DAP consent,
+			 * purpose-filtering and operation logic below all work on
+			 * base_msg->data.topic - so an as-yet-unresolved NULL topic here makes
+			 * strcmp()/strncmp() dereference NULL and crash the broker (the
+			 * handle_publish.c:308 SEGV). Resolve the alias now, or reject the publish
+			 * if the empty topic carries no usable alias, before any topic dereference. */
+			if(base_msg->data.topic == NULL)
+			{
+				uint16_t resolved_alias = 0;
+				const mosquitto_property *alias_prop = mosquitto_property_read_int16(
+						properties, MQTT_PROP_TOPIC_ALIAS, &resolved_alias, false);
+				if(alias_prop == NULL || resolved_alias == 0
+						|| (context->listener && resolved_alias > context->listener->max_topic_alias))
+				{
+					log__printf(NULL, MOSQ_LOG_INFO,
+						"Empty PUBLISH topic with no valid topic alias from %s, rejecting.",
+						context->id);
+					mosquitto_property_free_all(&properties);
+					db__msg_store_free(base_msg);
+					return MOSQ_ERR_TOPIC_ALIAS_INVALID;
+				}
+				if(alias__find_by_alias(context, ALIAS_DIR_R2L, resolved_alias, &base_msg->data.topic))
+				{
+					log__printf(NULL, MOSQ_LOG_INFO,
+						"Unknown topic alias %u in PUBLISH from %s, rejecting.",
+						resolved_alias, context->id);
+					mosquitto_property_free_all(&properties);
+					db__msg_store_free(base_msg);
+					return MOSQ_ERR_PROTOCOL;
+				}
+			}
+
 			/* Immediately check for consent and disallow if not given */
 			const mosquitto_property *curr_prop_ptr = properties;
 			bool consent_given = false;

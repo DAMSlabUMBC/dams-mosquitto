@@ -138,8 +138,8 @@ Detailed client library API documentation can be found at <https://mosquitto.org
 Clone this repository:
 
 ```bash
-git clone https://github.com/DAMSlabUMBC/dams-mosquitto.git
-cd dams-mosquitto
+git clone https://github.com/DAMSlabUMBC/mqtt-dap-mosquitto.git
+cd mqtt-dap-mosquitto
 ```
 
 ### Option 1: Build with Docker (Recommended)

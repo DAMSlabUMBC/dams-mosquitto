@@ -23,10 +23,10 @@ RUN apt-get update && apt-get install -y \
  && rm -rf /var/lib/apt/lists/*
 
 # Set up the working directory
-WORKDIR /opt/mqtt_brokers/dams-mosquitto
+WORKDIR /opt/mqtt_brokers/mqtt-dap-mosquitto
 
 # Copy everything over
-COPY . /opt/mqtt_brokers/dams-mosquitto
+COPY . /opt/mqtt_brokers/mqtt-dap-mosquitto
 
 # Build mosquitto (had to disable LTO and ENGINE_cleanup to get it working)
 RUN cmake -DWITH_LTO=OFF \

@@ -130,3 +130,16 @@ char **parse_purpose_filter(const char *filter, uint32_t *num_results)
     *num_results = exp_count;
     return results;
 }
+
+char *purpose_filter_store_dup(const char *purpose)
+{
+    /* +1 for the NUL terminator: strcpy writes strlen(purpose)+1 bytes. Omitting it
+     * overflowed the allocation by one byte (the original handle__subscribe defect). */
+    char *filter = mosquitto_malloc(strlen(purpose) + 1);
+    if(!filter)
+    {
+        return NULL;
+    }
+    strcpy(filter, purpose);
+    return filter;
+}

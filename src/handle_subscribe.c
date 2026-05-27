@@ -159,8 +159,8 @@ int handle__subscribe(struct mosquitto *context)
 									return MOSQ_ERR_MALFORMED_PACKET;
 							}
 
-							/* Allocate memory for the filter and copy string */
-							char* filter = mosquitto_malloc(strlen(purposes[i]));
+							/* Store an independent, correctly-sized copy of the filter. */
+							char* filter = purpose_filter_store_dup(purposes[i]);
 							if(!filter)
 							{
 								/* Free purpose struct and purposes */
@@ -173,7 +173,6 @@ int handle__subscribe(struct mosquitto *context)
 								mosquitto_property_free_all(&properties);
 								return MOSQ_ERR_NOMEM;
 							}
-							strcpy(filter, purposes[i]);
 							purpose_filters[purpose_filter_count] = filter;
 							purpose_filter_count++;
 						}

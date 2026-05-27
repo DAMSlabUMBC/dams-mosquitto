@@ -17,4 +17,11 @@ mosquitto_pf_expansion *combine_expansions(mosquitto_pf_expansion *old_list, uin
                                        uint32_t *out_count);
 char **parse_purpose_filter(const char *filter, uint32_t *num_results);
 
-#endif 
+/* Duplicate a single parsed purpose string for long-term storage in a subscription's
+ * purpose-filter list. Returns a newly-allocated, NUL-terminated copy (caller owns) or
+ * NULL on allocation failure. Split out of handle__subscribe so the allocation sizing is
+ * unit-testable: the inline version undersized the buffer by one byte (strlen instead of
+ * strlen+1) and overflowed when copying the terminator. */
+char *purpose_filter_store_dup(const char *purpose);
+
+#endif
