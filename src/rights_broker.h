@@ -25,8 +25,11 @@ void broker_send_response_success(const char *publisher_id, const char *operatio
 /* Acknowledge a validated pending op to the requester's ONP, carrying the
  * broker-assigned numeric op id and the absolute deadline (epoch seconds). */
 void broker_send_response_pending(const char *publisher_id, const char *operation, uint64_t op_id, const char *corr_data, uint16_t correlation_data_len, time_t deadline);
+/* Final failure for a request. Like broker_send_response_success it is sent to the
+ * requester's response topic (op_resp/<publisher_id>); pass response_topic == NULL to
+ * fall back to ONP/<publisher_id>. */
 void broker_send_response_failure(const char *publisher_id, const char *operation, const char *corr_data, uint16_t correlation_data_len, const char *reason,
-    struct subscriber_list *unreached_subs);
+    struct subscriber_list *unreached_subs, char *response_topic);
 
 /* Pending-op dispatch (DELETE/RESTRICT): forward the request to the relevant
  * subscribers on their ORS (carrying op_id), register the op with the deadline tracker

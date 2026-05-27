@@ -135,13 +135,21 @@ void broker_send_response_pending(const char *publisher_id, const char *operatio
     mosquitto_property_free_all(&props);
 }
 
-/* Sends a final failure to RNP/<publisher_id> (e.g. unknown right or offline never reconnected). */
+/* Sends a final failure for a request. It mirrors broker_send_response_success: the
+ * failure goes to the requester's response topic (op_resp/<publisher_id>) so the
+ * Success and Failure outcomes of a request land on the same channel and the requester
+ * correlates either by its correlation data. When the request carried no response topic
+ * (response_topic == NULL) it falls back to ONP/<publisher_id>. */
 void broker_send_response_failure(const char *publisher_id, const char *operation, const char *corr_data, uint16_t correlation_data_len, const char *reason,
-    struct subscriber_list *unreached_subs)
+    struct subscriber_list *unreached_subs, char *response_topic)
 {
     if(!publisher_id) return;
     char onp_topic[256];
-    snprintf(onp_topic, sizeof(onp_topic), "%s/%s", MOSQ_DAP_TOPIC_ONP, publisher_id);
+    if(response_topic == NULL)
+    {
+        snprintf(onp_topic, sizeof(onp_topic), "%s/%s", MOSQ_DAP_TOPIC_ONP, publisher_id);
+        response_topic = onp_topic;
+    }
 
     mosquitto_property *props = NULL;
     mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
@@ -178,7 +186,7 @@ void broker_send_response_failure(const char *publisher_id, const char *operatio
             MOSQ_DAP_UNREACHED_CLIENTS_KEY, contact_buf);
     }
 
-    db__messages_easy_queue_with_purpose(NULL, onp_topic, MOSQ_DAP_OP_PURPOSE, 0, 0, NULL, false, 0, &props);
+    db__messages_easy_queue_with_purpose(NULL, response_topic, MOSQ_DAP_OP_PURPOSE, 0, 0, NULL, false, 0, &props);
     mosquitto_property_free_all(&props);
 }
 
@@ -372,7 +380,7 @@ void broker_dispatch_pending_operation(const char *publisher_id, const char *ope
      * correlates via correlation data, like the other immediate responses. */
     if(n == 0){
         broker_send_response_failure(publisher_id, operation, correlation_data, correlation_data_len,
-            "No relevant subscribers found.", NULL);
+            "No relevant subscribers found.", NULL, response_topic);
         return;
     }
 

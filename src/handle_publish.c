@@ -535,7 +535,23 @@ int handle__publish(struct mosquitto *context)
 					}
 					else if (p->identifier == MQTT_PROP_CORRELATION_DATA)
 					{
-						mosquitto_property_read_binary(p, MQTT_PROP_CORRELATION_DATA, (void **)&correlation_data, &correlation_data_len, false);
+						/* A *present* CorrelationData of zero length reads back as a NULL
+						 * buffer with len 0 (mosquitto_property_read_binary), which is
+						 * indistinguishable from "absent" to the response builders'
+						 * `if(corr_data)` guard - so the property would be silently dropped
+						 * from the broker's Success/Failure/Pending response. A requester
+						 * that encodes a correlation id of 0 sends exactly this zero-length
+						 * value, so the response would come back with no CorrelationData and
+						 * could not be correlated. read_binary returns the property pointer
+						 * (non-NULL) whenever it is found; keep a non-NULL marker in that
+						 * case so the builders round-trip a zero-length CorrelationData
+						 * instead of omitting it. The 1-byte buffer is never dereferenced
+						 * (add_binary copies nothing when len is 0); it only flips the guard. */
+						if(mosquitto_property_read_binary(p, MQTT_PROP_CORRELATION_DATA,
+								(void **)&correlation_data, &correlation_data_len, false) != NULL
+								&& correlation_data == NULL){
+							correlation_data = mosquitto_calloc(1, 1);
+						}
 					}
 					else if(p->identifier == MQTT_PROP_RESPONSE_TOPIC)
 					{
@@ -849,7 +865,7 @@ int handle__publish(struct mosquitto *context)
 						subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
 						subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, response_topic, op_id, op_info, correlation_data, correlation_data_len, 0);
 						if(offline){
-							broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Subscriber not connected", offline);
+							broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Subscriber not connected", offline, response_topic);
 						}
 						else
 						{
@@ -870,7 +886,7 @@ int handle__publish(struct mosquitto *context)
 					if(!relevant)
 					{
 						broker_send_response_failure(context->id, op_id, correlation_data,
-								correlation_data_len, "No relevant subscribers", NULL);
+								correlation_data_len, "No relevant subscribers", NULL, response_topic);
 					}
 					else
 					{
@@ -921,7 +937,7 @@ int handle__publish(struct mosquitto *context)
 				else
 				{
 					/* Unrecognized right. */
-					broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Unknown right", NULL);
+					broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Unknown right", NULL, response_topic);
 				}
 			}
 		}
@@ -935,6 +951,9 @@ int handle__publish(struct mosquitto *context)
 	mosquitto_FREE(op_status);
 	mosquitto_FREE(op_reason);
 	mosquitto_FREE(op_client_id);
+	/* Allocated by mosquitto_property_read_binary (or the zero-length marker above);
+	 * the response builders copy what they need, so it is safe to release here. */
+	mosquitto_FREE(correlation_data);
 
 	switch(stored->data.qos){
 		case 0:
