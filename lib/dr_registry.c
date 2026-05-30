@@ -180,13 +180,15 @@ static bool dr__field_matches(const char *filter_csv, const char *value)
 }
 
 /*
- * Condition for the SP recorded at receipt time against the purpose filters: at
- * least one purpose named in the SP must also appear among the purpose filters.
+ * Condition for the SP recorded at receipt time against the purpose filters: a
+ * "*" SP matches any filter; otherwise at least one purpose named in the SP
+ * must also appear among the purpose filters.
  */
 static bool dr__purpose_matches(const char *pf_csv, const char *sp_csv)
 {
     if(dr__filter_is_any(pf_csv)) return true;
     if(!sp_csv) return false;
+    if(dr__filter_is_any(sp_csv)) return true;
 
     const char *p = sp_csv;
     while(*p){
