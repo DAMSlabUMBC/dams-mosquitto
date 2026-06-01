@@ -131,7 +131,6 @@ int handle__publish(struct mosquitto *context)
 	uint64_t op_id_num = 0;
 	bool found_op_id_num = false;
 
-	bool found_purpose_filter = false;
 	char* purpose_filter = NULL;
 
 	if(context->state != mosq_cs_active){
@@ -146,11 +145,8 @@ int handle__publish(struct mosquitto *context)
 	}
 
 	/* Stamp the receipt time once, before any other DAP processing, so a single
-	 * reference timestamp drives both queue ordering and pending-operation matching.
-	 * Only meaningful under the protection framework; left 0 otherwise. */
-	if(db.config->use_protection_framework){
-		base_msg->dap_recv_time = time(NULL);
-	}
+	 * reference timestamp drives both queue ordering and pending-operation matchingn*/
+	base_msg->dap_recv_time = time(NULL);
 
 	dup = (header & 0x08)>>3;
 	base_msg->data.qos = (header & 0x06)>>1;
@@ -211,356 +207,232 @@ int handle__publish(struct mosquitto *context)
 			return rc;
 		}
 
-		/* Only run the below if using the framework */
-		if(db.config->use_protection_framework)
+		/* MQTT v5 allows a zero-length PUBLISH topic when a Topic Alias is
+			* supplied; the real topic is resolved from the alias. Upstream does that
+			* resolution further down (after this block), but the DAP consent,
+			* purpose-filtering and operation logic below all work on
+			* base_msg->data.topic - so an as-yet-unresolved NULL topic here makes
+			* strcmp()/strncmp() dereference NULL and crash the broker (the
+			* handle_publish.c:308 SEGV). Resolve the alias now, or reject the publish
+			* if the empty topic carries no usable alias, before any topic dereference. */
+		if(base_msg->data.topic == NULL)
 		{
-			/* MQTT v5 allows a zero-length PUBLISH topic when a Topic Alias is
-			 * supplied; the real topic is resolved from the alias. Upstream does that
-			 * resolution further down (after this block), but the DAP consent,
-			 * purpose-filtering and operation logic below all work on
-			 * base_msg->data.topic - so an as-yet-unresolved NULL topic here makes
-			 * strcmp()/strncmp() dereference NULL and crash the broker (the
-			 * handle_publish.c:308 SEGV). Resolve the alias now, or reject the publish
-			 * if the empty topic carries no usable alias, before any topic dereference. */
-			if(base_msg->data.topic == NULL)
+			uint16_t resolved_alias = 0;
+			const mosquitto_property *alias_prop = mosquitto_property_read_int16(
+					properties, MQTT_PROP_TOPIC_ALIAS, &resolved_alias, false);
+			if(alias_prop == NULL || resolved_alias == 0
+					|| (context->listener && resolved_alias > context->listener->max_topic_alias))
 			{
-				uint16_t resolved_alias = 0;
-				const mosquitto_property *alias_prop = mosquitto_property_read_int16(
-						properties, MQTT_PROP_TOPIC_ALIAS, &resolved_alias, false);
-				if(alias_prop == NULL || resolved_alias == 0
-						|| (context->listener && resolved_alias > context->listener->max_topic_alias))
-				{
-					log__printf(NULL, MOSQ_LOG_INFO,
-						"Empty PUBLISH topic with no valid topic alias from %s, rejecting.",
-						context->id);
-					mosquitto_property_free_all(&properties);
-					db__msg_store_free(base_msg);
-					return MOSQ_ERR_TOPIC_ALIAS_INVALID;
-				}
-				if(alias__find_by_alias(context, ALIAS_DIR_R2L, resolved_alias, &base_msg->data.topic))
-				{
-					log__printf(NULL, MOSQ_LOG_INFO,
-						"Unknown topic alias %u in PUBLISH from %s, rejecting.",
-						resolved_alias, context->id);
-					mosquitto_property_free_all(&properties);
-					db__msg_store_free(base_msg);
-					return MOSQ_ERR_PROTOCOL;
-				}
+				log__printf(NULL, MOSQ_LOG_INFO,
+					"Empty PUBLISH topic with no valid topic alias from %s, rejecting.",
+					context->id);
+				mosquitto_property_free_all(&properties);
+				db__msg_store_free(base_msg);
+				return MOSQ_ERR_TOPIC_ALIAS_INVALID;
 			}
+			if(alias__find_by_alias(context, ALIAS_DIR_R2L, resolved_alias, &base_msg->data.topic))
+			{
+				log__printf(NULL, MOSQ_LOG_INFO,
+					"Unknown topic alias %u in PUBLISH from %s, rejecting.",
+					resolved_alias, context->id);
+				mosquitto_property_free_all(&properties);
+				db__msg_store_free(base_msg);
+				return MOSQ_ERR_PROTOCOL;
+			}
+		}
 
-			/* Immediately check for consent and disallow if not given */
+		/* Immediately check for consent and disallow if not given */
+		const mosquitto_property *curr_prop_ptr = properties;
+		bool consent_given = false;
+		while(curr_prop_ptr)
+		{
+			/* Parse the current property name/value */
+			char *name, *value;
+
+			curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false );
+			if(curr_prop_ptr)
+			{
+				/* Check if this is the consent property */
+				if(!strcmp(name, MOSQ_DAP_CONSENT_KEY))
+				{
+					/* If value is "1", consent given, keep processing. Otherwise reject */
+					if(!strcmp(value, "1"))
+					{
+						consent_given = true;
+						break;
+					}
+					else
+					{
+						log__printf(NULL, MOSQ_LOG_INFO,
+							"Consent not given for packet from %s, rejecting.",
+							context->id);
+						mosquitto_property_free_all(&properties);
+						return MOSQ_ERR_MALFORMED_PACKET;
+					}
+				}
+				/* Move to the next property */
+				curr_prop_ptr = curr_prop_ptr->next;
+			}
+		}
+
+		if(!consent_given)
+		{
+			log__printf(NULL, MOSQ_LOG_INFO,
+				"Consent not given for packet from %s, rejecting.",
+				context->id);
+			mosquitto_property_free_all(&properties);
+			return MOSQ_ERR_MALFORMED_PACKET;
+		}
+
+		/* Check if this is a registration message on the registration topic */
+		if(!strcmp(base_msg->data.topic, MOSQ_DAP_MP_REG_TOPIC))
+		{
+			/* Since there can be multiple user properties, loop through them */
 			const mosquitto_property *curr_prop_ptr = properties;
-			bool consent_given = false;
 			while(curr_prop_ptr)
 			{
 				/* Parse the current property name/value */
 				char *name, *value;
-
 				curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false );
 				if(curr_prop_ptr)
 				{
-					/* Check if this is the consent property */
-					if(!strcmp(name, MOSQ_DAP_CONSENT_KEY))
+					/* Check if this is a DAP-MP property */
+					if(!strcmp(name, MOSQ_DAP_MP_KEY))
 					{
-						/* If value is "1", consent given, keep processing. Otherwise reject */
-						if(!strcmp(value, "1"))
+						char *temp, *filter, *topic = NULL;
+
+						/* In Registration by Message, MP is of the form '<MP>:<topic> */
+						temp = strchr(value, ':');
+
+						if (temp == NULL)
 						{
-							consent_given = true;
-							break;
-						}
-						else
-						{
-							log__printf(NULL, MOSQ_LOG_INFO,
-								"Consent not given for packet from %s, rejecting.",
-								context->id);
 							mosquitto_property_free_all(&properties);
 							return MOSQ_ERR_MALFORMED_PACKET;
 						}
+
+						uint32_t index = (uint32_t)(temp - value);
+						temp++; /* Skip the ':' */
+						
+						// Allocate memory for topic and purpose
+						filter = mosquitto_malloc(index + 1);
+						topic = mosquitto_malloc(strlen(temp) + 1);
+						if(!filter || !topic)
+						{
+							mosquitto_property_free_all(&properties);
+							return MOSQ_ERR_NOMEM;
+						}
+
+						// Copy
+						filter = strncpy(filter, value, index);
+						filter[index] = '\0';
+						topic = strcpy(topic, temp);
+
+						/* Register the topic to purpose filter mapping */
+						mp__register_topic(context->id, topic, filter);
 					}
 					/* Move to the next property */
 					curr_prop_ptr = curr_prop_ptr->next;
 				}
 			}
 
-			if(!consent_given)
+			/* Do not forward this registration message */
+			mosquitto_property_free_all(&properties);
+			return MOSQ_ERR_SUCCESS;
+		}
+		else
+		{
+			/* Normal data publish: the topic must have a registered MP. */
+			char *stored = mp__lookup_topic(context->id, base_msg->data.topic);
+			if(stored)
 			{
+				base_msg->data.purpose_filter = mosquitto_strdup(stored);
+				base_msg->data.has_purpose_filter = true;
+			}
+			else if(dap_is_op_system_topic(base_msg->data.topic))
+			{
+				/* Operation-system/control topic: no MP required. Leave
+					* delivery ungated as before (deny-all filter). */
+				base_msg->data.purpose_filter = mosquitto_strdup("");
+				base_msg->data.has_purpose_filter = true;
+			}
+			else
+			{
+				/* Paper 4.3: reject data messages on topics with no
+					* registered MP, matching the PER_MSG path, rather than
+					* silently applying a deny-all filter. */
 				log__printf(NULL, MOSQ_LOG_INFO,
-					"Consent not given for packet from %s, rejecting.",
-					context->id);
+					"No message purpose (MP) registered for topic %s from %s, rejecting.",
+					base_msg->data.topic, context->id);
 				mosquitto_property_free_all(&properties);
+				db__msg_store_free(base_msg);
 				return MOSQ_ERR_MALFORMED_PACKET;
 			}
+		}
 
-			/* Check if purpose filtering is enabled */
-			if(db.config->purpose_filtering)
-			{
-				/* (1) Per-Message Declaration */
-				if(db.config->purpose_filter_method == MOSQ_DAP_PER_MSG)
+		/* Read all potential operational properties for later */
+		if(db.config->metadata_operation_handling)
+		{
+			/* Look through the user properties for DAP-OpType */
+			const mosquitto_property *p = properties;
+			while(p){
+				if(p->identifier == MQTT_PROP_USER_PROPERTY){
+					char *name=NULL, *value=NULL;
+					mosquitto_property_read_string_pair(p, MQTT_PROP_USER_PROPERTY, &name, &value, false);
+
+					if(name && value){
+						/* If we find DAP-OpType then note it. */
+						if(!strcmp(name, MOSQ_DAP_OP_KEY)){
+							found_op = true;
+							op_id  = mosquitto_strdup(value);
+						} else if(!strcmp(name, MOSQ_DAP_OP_TFS_KEY)){
+							op_topic_filters = mosquitto_strdup(value);
+						} else if(!strcmp(name, MOSQ_DAP_OP_PFS_KEY)){
+							op_purpose_filters = mosquitto_strdup(value);
+						} else if(!strcmp(name, MOSQ_DAP_OP_CLIENTS_KEY)){
+							op_client_filters = mosquitto_strdup(value);
+						} else if(!strcmp(name, MOSQ_DAP_OP_BEFORE_KEY)){
+							op_before = (time_t)strtoll(value, NULL, 10);
+						} else if(!strcmp(name, MOSQ_DAP_OP_AFTER_KEY)){
+							op_after = (time_t)strtoll(value, NULL, 10);
+						} else if(!strcmp(name, MOSQ_DAP_STATUS_KEY)){
+							op_status = mosquitto_strdup(value);
+						} else if(!strcmp(name, MOSQ_DAP_REASON_KEY)){
+							op_reason = mosquitto_strdup(value);
+						} else if(!strcmp(name, MOSQ_DAP_ID_KEY)){
+							op_client_id = mosquitto_strdup(value);
+						} else if(!strcmp(name, MOSQ_DAP_OP_ID_KEY)){
+							op_id_num = (uint64_t)strtoull(value, NULL, 10);
+							found_op_id_num = true;
+						}
+					}
+				}
+				else if (p->identifier == MQTT_PROP_CORRELATION_DATA)
 				{
-					/* Since there can be multiple user properties, loop through them */
-					const mosquitto_property *curr_prop_ptr = properties;
-					while(curr_prop_ptr)
-					{
-						/* Parse the current property name/value */
-						char *name, *value;
-						curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false );
-						if(curr_prop_ptr)
-						{
-							/* Check if this is a DAP-MP property */
-							if(!strcmp(name, MOSQ_DAP_MP_KEY))
-							{
-								/* Message cannot have multiple purpose filters */
-								if(found_purpose_filter)
-								{
-									log__printf(NULL, MOSQ_LOG_INFO,
-										"More than one purpose filter from %s, rejecting.",
-										context->id);
-									mosquitto_property_free_all(&properties);
-									return MOSQ_ERR_MALFORMED_PACKET;
-								}
-		
-								/* Allocate memory for the filter */
-								char *filter = mosquitto_malloc(strlen(value) + 1);
-								if(!filter)
-								{
-									mosquitto_property_free_all(&properties);
-									return MOSQ_ERR_NOMEM;
-								}
-								strcpy(filter, value);
-								purpose_filter = filter;
-								found_purpose_filter = true;
-							}
-							/* Move to the next property */
-							curr_prop_ptr = curr_prop_ptr->next;
-						}
+					/* A *present* CorrelationData of zero length reads back as a NULL
+						* buffer with len 0 (mosquitto_property_read_binary), which is
+						* indistinguishable from "absent" to the response builders'
+						* `if(corr_data)` guard - so the property would be silently dropped
+						* from the broker's Success/Failure/Pending response. A requester
+						* that encodes a correlation id of 0 sends exactly this zero-length
+						* value, so the response would come back with no CorrelationData and
+						* could not be correlated. read_binary returns the property pointer
+						* (non-NULL) whenever it is found; keep a non-NULL marker in that
+						* case so the builders round-trip a zero-length CorrelationData
+						* instead of omitting it. The 1-byte buffer is never dereferenced
+						* (add_binary copies nothing when len is 0); it only flips the guard. */
+					if(mosquitto_property_read_binary(p, MQTT_PROP_CORRELATION_DATA,
+							(void **)&correlation_data, &correlation_data_len, false) != NULL
+							&& correlation_data == NULL){
+						correlation_data = mosquitto_calloc(1, 1);
 					}
 				}
-				/* (2) Registration by Message */
-				else if(db.config->purpose_filter_method == MOSQ_DAP_MSG_REG)
+				else if(p->identifier == MQTT_PROP_RESPONSE_TOPIC)
 				{
-					/* Check if this is a registration message on $DAP/purpose_management */
-					if(!strcmp(base_msg->data.topic, MOSQ_DAP_PM_TOPIC))
-					{
-						/* Since there can be multiple user properties, loop through them */
-						const mosquitto_property *curr_prop_ptr = properties;
-						while(curr_prop_ptr)
-						{
-							/* Parse the current property name/value */
-							char *name, *value;
-							curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false );
-							if(curr_prop_ptr)
-							{
-								/* Check if this is a DAP-MP property */
-								if(!strcmp(name, MOSQ_DAP_MP_KEY))
-								{
-									char *temp, *filter, *topic = NULL;
-
-									/* In Registration by Message, MP is of the form '<MP>:<topic> */
-									temp = strchr(value, ':');
-
-									if (temp == NULL)
-									{
-										mosquitto_property_free_all(&properties);
-										return MOSQ_ERR_MALFORMED_PACKET;
-									}
-
-									uint32_t index = (uint32_t)(temp - value);
-									temp++; /* Skip the ':' */
-									
-									// Allocate memory for topic and purpose
-									filter = mosquitto_malloc(index + 1);
-									topic = mosquitto_malloc(strlen(temp) + 1);
-									if(!filter || !topic)
-									{
-										mosquitto_property_free_all(&properties);
-										return MOSQ_ERR_NOMEM;
-									}
-
-									// Copy
-									filter = strncpy(filter, value, index);
-									filter[index] = '\0';
-									topic = strcpy(topic, temp);
-
-									/* Register the topic to purpose filter mapping */
-									mp__register_topic(context->id, topic, filter);
-								}
-								/* Move to the next property */
-								curr_prop_ptr = curr_prop_ptr->next;
-							}
-						}
-
-						/* Do not forward this registration message */
-						mosquitto_property_free_all(&properties);
-						return MOSQ_ERR_SUCCESS;
-					}
-					else
-					{
-						/* Normal data publish: the topic must have a registered MP. */
-						char *stored = mp__lookup_topic(context->id, base_msg->data.topic);
-						if(stored)
-						{
-							base_msg->data.purpose_filter = mosquitto_strdup(stored);
-							base_msg->data.has_purpose_filter = true;
-						}
-						else if(dap_is_op_system_topic(base_msg->data.topic))
-						{
-							/* Operation-system/control topic: no MP required. Leave
-							 * delivery ungated as before (deny-all filter). */
-							base_msg->data.purpose_filter = mosquitto_strdup("");
-							base_msg->data.has_purpose_filter = true;
-						}
-						else
-						{
-							/* Paper 4.3: reject data messages on topics with no
-							 * registered MP, matching the PER_MSG path, rather than
-							 * silently applying a deny-all filter. */
-							log__printf(NULL, MOSQ_LOG_INFO,
-								"No message purpose (MP) registered for topic %s from %s, rejecting.",
-								base_msg->data.topic, context->id);
-							mosquitto_property_free_all(&properties);
-							db__msg_store_free(base_msg);
-							return MOSQ_ERR_MALFORMED_PACKET;
-						}
-					}
+					mosquitto_property_read_string(p, MQTT_PROP_RESPONSE_TOPIC, &response_topic, false);
 				}
-				/* (3) Registration by Topic */
-				else if(db.config->purpose_filter_method == MOSQ_DAP_TOPIC_REG)
-				{
-					/* Check if this is a registration topic starting with $DAP/MP_reg/ */
-					if(strlen(base_msg->data.topic) >= strlen(MOSQ_DAP_MP_REG_TOPIC) && !strncmp(base_msg->data.topic, MOSQ_DAP_MP_REG_TOPIC, strlen(MOSQ_DAP_MP_REG_TOPIC)))
-					{
-						/* Parse out real_topic and mp_value from the bracketed suffix */
-						const char *rest = base_msg->data.topic + strlen(MOSQ_DAP_MP_REG_TOPIC);
-						char rt[256] = {0}, mp[256] = {0};
-		
-						const char *b = strchr(rest, '[');
-						if(!b)
-						{
-							mosquitto_property_free_all(&properties);
-							return MOSQ_ERR_PROTOCOL;
-						}
-		
-						size_t rlen = b - rest;
-						if(rlen > 255) rlen = 255;
-						memcpy(rt, rest, rlen);
-						rt[rlen] = '\0';
-		
-						const char *eb = strrchr(b, ']');
-						if(!eb) return MOSQ_ERR_PROTOCOL;
-						size_t mlen = eb - (b + 1);
-						if(mlen > 255) mlen = 255;
-						memcpy(mp, b + 1, mlen);
-						mp[mlen] = '\0';
-		
-						mp__register_topic(context->id, rt, mp);
 
-						/* Do not forward registration */
-						mosquitto_property_free_all(&properties);
-						return MOSQ_ERR_SUCCESS;
-					}
-					/* $DAP/SP_reg/ handling and the SP registry were removed; the
-					 * subscriber SP now lives on the subscription leaf, set from the
-					 * SUBSCRIBE path. A former SP_reg topic falls through to a normal
-					 * data publish below. */
-					else
-					{
-						/* Normal data publish: the topic must have a registered MP. */
-						char *stored = mp__lookup_topic(context->id, base_msg->data.topic);
-						if(stored)
-						{
-							base_msg->data.purpose_filter = mosquitto_strdup(stored);
-							base_msg->data.has_purpose_filter = true;
-						}
-						else if(dap_is_op_system_topic(base_msg->data.topic))
-						{
-							/* Operation-system/control topic: no MP required. Leave
-							 * delivery ungated as before (deny-all filter). */
-							base_msg->data.purpose_filter = mosquitto_strdup("");
-							base_msg->data.has_purpose_filter = true;
-						}
-						else
-						{
-							/* Paper 4.3: reject data messages on topics with no
-							 * registered MP, matching the PER_MSG path, rather than
-							 * silently applying a deny-all filter. */
-							log__printf(NULL, MOSQ_LOG_INFO,
-								"No message purpose (MP) registered for topic %s from %s, rejecting.",
-								base_msg->data.topic, context->id);
-							mosquitto_property_free_all(&properties);
-							db__msg_store_free(base_msg);
-							return MOSQ_ERR_MALFORMED_PACKET;
-						}
-					}
-				}
-			}
-
-			/* Read all potential operational properties for later */
-			if(db.config->metadata_operation_handling)
-			{
-				/* Look through the user properties for DAP-OpType */
-				const mosquitto_property *p = properties;
-				while(p){
-					if(p->identifier == MQTT_PROP_USER_PROPERTY){
-						char *name=NULL, *value=NULL;
-						mosquitto_property_read_string_pair(p, MQTT_PROP_USER_PROPERTY, &name, &value, false);
-
-						if(name && value){
-							/* If we find DAP-OpType then note it. */
-							if(!strcmp(name, MOSQ_DAP_OP_KEY)){
-								found_op = true;
-								op_id  = mosquitto_strdup(value);
-							} else if(!strcmp(name, MOSQ_DAP_OP_INFO_KEY)){
-								op_info = mosquitto_strdup(value);
-							} else if(!strcmp(name, MOSQ_DAP_OP_TFS_KEY)){
-								op_topic_filters = mosquitto_strdup(value);
-							} else if(!strcmp(name, MOSQ_DAP_OP_PFS_KEY)){
-								op_purpose_filters = mosquitto_strdup(value);
-							} else if(!strcmp(name, MOSQ_DAP_OP_CLIENTS_KEY)){
-								op_client_filters = mosquitto_strdup(value);
-							} else if(!strcmp(name, MOSQ_DAP_OP_BEFORE_KEY)){
-								op_before = (time_t)strtoll(value, NULL, 10);
-							} else if(!strcmp(name, MOSQ_DAP_OP_AFTER_KEY)){
-								op_after = (time_t)strtoll(value, NULL, 10);
-							} else if(!strcmp(name, MOSQ_DAP_STATUS_KEY)){
-								op_status = mosquitto_strdup(value);
-							} else if(!strcmp(name, MOSQ_DAP_REASON_KEY)){
-								op_reason = mosquitto_strdup(value);
-							} else if(!strcmp(name, MOSQ_DAP_ID_KEY)){
-								op_client_id = mosquitto_strdup(value);
-							} else if(!strcmp(name, MOSQ_DAP_OP_ID_KEY)){
-								op_id_num = (uint64_t)strtoull(value, NULL, 10);
-								found_op_id_num = true;
-							}
-						}
-					}
-					else if (p->identifier == MQTT_PROP_CORRELATION_DATA)
-					{
-						/* A *present* CorrelationData of zero length reads back as a NULL
-						 * buffer with len 0 (mosquitto_property_read_binary), which is
-						 * indistinguishable from "absent" to the response builders'
-						 * `if(corr_data)` guard - so the property would be silently dropped
-						 * from the broker's Success/Failure/Pending response. A requester
-						 * that encodes a correlation id of 0 sends exactly this zero-length
-						 * value, so the response would come back with no CorrelationData and
-						 * could not be correlated. read_binary returns the property pointer
-						 * (non-NULL) whenever it is found; keep a non-NULL marker in that
-						 * case so the builders round-trip a zero-length CorrelationData
-						 * instead of omitting it. The 1-byte buffer is never dereferenced
-						 * (add_binary copies nothing when len is 0); it only flips the guard. */
-						if(mosquitto_property_read_binary(p, MQTT_PROP_CORRELATION_DATA,
-								(void **)&correlation_data, &correlation_data_len, false) != NULL
-								&& correlation_data == NULL){
-							correlation_data = mosquitto_calloc(1, 1);
-						}
-					}
-					else if(p->identifier == MQTT_PROP_RESPONSE_TOPIC)
-					{
-						mosquitto_property_read_string(p, MQTT_PROP_RESPONSE_TOPIC, &response_topic, false);
-					}
-
-					/* Move to next property. */
-					p = p->next;
-				}
+				/* Move to next property. */
+				p = p->next;
 			}
 		}
 
@@ -573,12 +445,10 @@ int handle__publish(struct mosquitto *context)
 
 		/* Expose the receipt timestamp to subscribers as a user property, so they
 		 * share the broker's reference time for ordering. */
-		if(db.config->use_protection_framework){
-			char ts_buf[32];
-			if(dap_timestamp_format(base_msg->dap_recv_time, ts_buf, sizeof(ts_buf)) == 0){
-				mosquitto_property_add_string_pair(&base_msg->data.properties,
-						MQTT_PROP_USER_PROPERTY, MOSQ_DAP_TIMESTAMP_KEY, ts_buf);
-			}
+		char ts_buf[32];
+		if(dap_timestamp_format(base_msg->dap_recv_time, ts_buf, sizeof(ts_buf)) == 0){
+			mosquitto_property_add_string_pair(&base_msg->data.properties,
+					MQTT_PROP_USER_PROPERTY, MOSQ_DAP_TIMESTAMP_KEY, ts_buf);
 		}
 	}
 	mosquitto_property_free_all(&properties);
@@ -614,31 +484,6 @@ int handle__publish(struct mosquitto *context)
 		/* Invalid publish topic, just swallow it. */
 		db__msg_store_free(base_msg);
 		return MOSQ_ERR_MALFORMED_PACKET;
-	}
-
-	if(db.config->use_protection_framework && db.config->purpose_filtering)
-	{
-		/* Purpose filter must exist if filtering type is MOSQ_DAP_PER_MSG */
-		if(db.config->purpose_filter_method == MOSQ_DAP_PER_MSG)
-		{
-			if(found_purpose_filter)
-			{
-				base_msg->data.purpose_filter = purpose_filter;
-				base_msg->data.has_purpose_filter = true;
-			}
-			else if (db.config->purpose_filtering && db.config->purpose_filter_method == MOSQ_DAP_PER_MSG)
-			{
-				log__printf(NULL, MOSQ_LOG_INFO,
-					"Purpose filter not specified by publication from %s, rejecting.",
-					context->id);
-					db__msg_store_free(base_msg);
-					return MOSQ_ERR_MALFORMED_PACKET;
-			}
-		}
-		else if(db.config->purpose_filter_method == MOSQ_DAP_NONE)
-		{
-			base_msg->data.has_purpose_filter = false;
-		}
 	}
 
 	base_msg->data.payloadlen = context->in_packet.remaining_length - context->in_packet.pos;
@@ -776,169 +621,165 @@ int handle__publish(struct mosquitto *context)
 		dr__record_retained_publisher(context->id, stored->data.topic);
 	}
 
-	if(db.config->use_protection_framework)
+	/* Read all potential operational properties for later. A request carries
+		* DAP-OpType (found_op); a subscriber status notification carries DAP-Status. */
+	if(db.config->metadata_operation_handling && (found_op || op_status))
 	{
-		/* Read all potential operational properties for later. A request carries
-		 * DAP-OpType (found_op); a subscriber status notification carries DAP-Status. */
-		if(db.config->metadata_operation_handling && (found_op || op_status))
+		if(!strncmp(stored->data.topic, MOSQ_DAP_TOPIC_OSYS, 5))
 		{
-			if(!strncmp(stored->data.topic, MOSQ_DAP_TOPIC_OSYS, 5))
+			if(op_status)
 			{
-				if(op_status)
-				{
-					/* Inbound status notification: relay it to the requester and, on a
-					 * terminal status, advance the deadline tracker. */
-					handle_dap_status_notification(context, found_op ? op_id : NULL,
-							op_id_num, found_op_id_num, op_status, op_reason,
-							op_client_id, stored, correlation_data, correlation_data_len);
-				}
-				/* C1 Operations */
-				else if(!strcmp(op_id, MOSQ_DAP_RIGHT_INFORMED))
-				{
-					subscription_list *subs = find_subscriptions_for_publisher(context->id);
-					while(subs){
-						const char *info = ri__lookup_info(subs->subscriber_id);
-						if(info){
-							broker_send_response_success(context->id, op_id, correlation_data, correlation_data_len, info, response_topic);
-							ri__mark_sent_to_pub(context->id, subs->subscriber_id);
-						}
-						subs = subs->next;
+				/* Inbound status notification: relay it to the requester and, on a
+					* terminal status, advance the deadline tracker. */
+				handle_dap_status_notification(context, found_op ? op_id : NULL,
+						op_id_num, found_op_id_num, op_status, op_reason,
+						op_client_id, stored, correlation_data, correlation_data_len);
+			}
+			/* C1 Operations */
+			else if(!strcmp(op_id, MOSQ_DAP_OP_AUDIT))
+			{
+				subscription_list *subs = find_subscriptions_for_publisher(context->id);
+				while(subs){
+					const char *info = ri__lookup_info(subs->subscriber_id);
+					if(info){
+						broker_send_response_success(context->id, op_id, correlation_data, correlation_data_len, info, response_topic);
+						ri__mark_sent_to_pub(context->id, subs->subscriber_id);
 					}
+					subs = subs->next;
 				}
+			}
 
-				/* REGISTER-INFO: store the requester's info for later auto-fulfilment.
-				 * "Informed-Reg" is the original name and is still accepted. */
-				else if(!strcmp(op_id, MOSQ_DAP_OP_REGISTER_INFO) || !strcmp(op_id, MOSQ_DAP_RIGHT_INFORMED_REG))
+			/* REGISTER-INFO: store the requester's info for later auto-fulfilment.
+				* "Informed-Reg" is the original name and is still accepted. */
+			else if(!strcmp(op_id, MOSQ_DAP_OP_REGISTER_INFO))
+			{
+				ri__register_info(context->id, stored->data.payload);
+			}
+
+			/* C2/C3 Operations */
+			else if (!strcmp(op_id, MOSQ_DAP_RIGHT_ACCESS) || !strcmp(op_id, MOSQ_DAP_OP_HISTORY)
+			|| !strcmp(op_id, MOSQ_DAP_OP_DELETE) || !strcmp(op_id, MOSQ_DAP_OP_RESTRICT))
+			{
+				/* DELETE/RESTRICT become pending operations in the broker-wide map;
+					* dap_op_request_insert succeeds for exactly those two and assigns the
+					* numeric op id. Every other right (Access/Portability/Rectification/
+					* Object/AutoDecision) falls through to the unchanged immediate path. */
+				uint64_t pending_op_id = 0;
+				bool is_pending_op = (dap_op_request_insert(db.dap_pending_ops, context->id, op_id,
+							op_topic_filters, op_purpose_filters, op_client_filters,
+							stored->dap_recv_time, &pending_op_id) == 0);
+
+				if(is_pending_op)
 				{
-					ri__register_info(context->id, stored->data.payload);
-				}
+					/* Deadline workflow. Relevant subscribers are those that received
+						* data from this publisher matching the operation's topic/purpose/
+						* client filters within the DAP-OpBefore/OpAfter receipt-time
+						* bounds (0 = unbounded on that side). */
+					log__printf(NULL, MOSQ_LOG_DEBUG,
+							"DAP pending operation %llu (%s) registered for %s; bounds after=%lld before=%lld",
+							(unsigned long long)pending_op_id, op_id, context->id,
+							(long long)op_after, (long long)op_before);
 
-				/* C2/C3 Operations */
-				else if (!strcmp(op_id, MOSQ_DAP_RIGHT_ACCESS) || !strcmp(op_id, MOSQ_DAP_RIGHT_PORTABILITY) || !strcmp(op_id, MOSQ_DAP_RIGHT_RECTIFICATION) 
-				|| !strcmp(op_id, MOSQ_DAP_RIGHT_ERASURE) || !strcmp(op_id, MOSQ_DAP_RIGHT_RESTRICTION)   || !strcmp(op_id, MOSQ_DAP_RIGHT_OBJECT) 
-				|| !strcmp(op_id, MOSQ_DAP_RIGHT_AUTODECISION))
-				{
-					/* DELETE/RESTRICT become pending operations in the broker-wide map;
-					 * dap_op_request_insert succeeds for exactly those two and assigns the
-					 * numeric op id. Every other right (Access/Portability/Rectification/
-					 * Object/AutoDecision) falls through to the unchanged immediate path. */
-					uint64_t pending_op_id = 0;
-					bool is_pending_op = (dap_op_request_insert(db.dap_pending_ops, context->id, op_id,
-								op_topic_filters, op_purpose_filters, op_client_filters,
-								stored->dap_recv_time, &pending_op_id) == 0);
-
-					if(is_pending_op)
-					{
-						/* Deadline workflow. Relevant subscribers are those that received
-						 * data from this publisher matching the operation's topic/purpose/
-						 * client filters within the DAP-OpBefore/OpAfter receipt-time
-						 * bounds (0 = unbounded on that side). */
-						log__printf(NULL, MOSQ_LOG_DEBUG,
-								"DAP pending operation %llu (%s) registered for %s; bounds after=%lld before=%lld",
-								(unsigned long long)pending_op_id, op_id, context->id,
-								(long long)op_after, (long long)op_before);
-
-						struct dr_sublist *relevant = dr__find_relevant_subscribers(context->id,
-								op_topic_filters, op_purpose_filters, op_client_filters,
-								op_before, op_after);
-
-						/* Assign a deadline relative to the receipt timestamp, forward to the
-						 * relevant subs on their ORS, register the op with the deadline
-						 * tracker, and echo a Pending ack (op id + deadline) to the requester.
-						 * The final Success/Failure is settled by the deadline sweep (loop.c)
-						 * and the status path, not synchronously here. */
-						time_t deadline = stored->dap_recv_time + MOSQ_DAP_DEFAULT_DEADLINE_SECS;
-						broker_dispatch_pending_operation(context->id, op_id, pending_op_id,
-								relevant, &stored->data, response_topic, op_info,
-								correlation_data, correlation_data_len, deadline);
-						dr__free_sublist(relevant);
-
-						/* DELETE additionally drops the publisher's stored will/retained data. */
-						if(!strcmp(op_id, MOSQ_DAP_RIGHT_ERASURE))
-						{
-							handle_remove_stored_messages(context->id);
-						}
-					}
-					else
-					{
-						/* Non-pending rights: immediate forward + Success/Failure. */
-						subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
-						subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, response_topic, op_id, op_info, correlation_data, correlation_data_len, 0);
-						if(offline){
-							broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Subscriber not connected", offline, response_topic);
-						}
-						else
-						{
-							broker_send_response_success(context->id, op_id, correlation_data, correlation_data_len, NULL, response_topic);
-						}
-					}
-				}
-
-				/* AUDIT: report which subscribers received the requester's matching
-				 * data. The broker fulfils this directly without consulting anyone;
-				 * the success payload is the comma-separated subscriber ids. No
-				 * relevant subscribers is a failure. */
-				else if(!strcmp(op_id, MOSQ_DAP_OP_AUDIT))
-				{
 					struct dr_sublist *relevant = dr__find_relevant_subscribers(context->id,
 							op_topic_filters, op_purpose_filters, op_client_filters,
 							op_before, op_after);
-					if(!relevant)
-					{
-						broker_send_response_failure(context->id, op_id, correlation_data,
-								correlation_data_len, "No relevant subscribers", NULL, response_topic);
-					}
-					else
-					{
-						size_t len = 0;
-						for(struct dr_sublist *s = relevant; s; s = s->next){
-							len += strlen(s->sub_id) + 1; /* id plus a separator/terminator */
-						}
-						char *payload = mosquitto_calloc(1, len + 1);
-						if(payload)
-						{
-							for(struct dr_sublist *s = relevant; s; s = s->next){
-								strcat(payload, s->sub_id);
-								if(s->next) strcat(payload, ",");
-							}
-							broker_send_response_success(context->id, op_id, correlation_data,
-									correlation_data_len, payload, response_topic);
-							mosquitto_FREE(payload);
-						}
-						dr__free_sublist(relevant);
-					}
-				}
 
-				/* HISTORY and UPDATE are subscriber-involving like DELETE/RESTRICT but
-				 * do not apply to in-flight messages, so they get no pending-ops entry.
-				 * Allocate an op id, forward to the relevant subscribers and track the
-				 * deadline. UPDATE's replacement payload rides along in the forwarded
-				 * request (stored->data.payload). */
-				else if(!strcmp(op_id, MOSQ_DAP_OP_HISTORY) || !strcmp(op_id, MOSQ_DAP_OP_UPDATE))
-				{
-					uint64_t hu_op_id = dap_pending_ops_allocate_op_id(db.dap_pending_ops);
-					struct dr_sublist *relevant = dr__find_relevant_subscribers(context->id,
-							op_topic_filters, op_purpose_filters, op_client_filters,
-							op_before, op_after);
+					/* Assign a deadline relative to the receipt timestamp, forward to the
+						* relevant subs on their ORS, register the op with the deadline
+						* tracker, and echo a Pending ack (op id + deadline) to the requester.
+						* The final Success/Failure is settled by the deadline sweep (loop.c)
+						* and the status path, not synchronously here. */
 					time_t deadline = stored->dap_recv_time + MOSQ_DAP_DEFAULT_DEADLINE_SECS;
-					broker_dispatch_pending_operation(context->id, op_id, hu_op_id,
+					broker_dispatch_pending_operation(context->id, op_id, pending_op_id,
 							relevant, &stored->data, response_topic, op_info,
 							correlation_data, correlation_data_len, deadline);
 					dr__free_sublist(relevant);
-				}
 
-				/* Generic operator-defined operation ("O:" prefix), also not implemented. */
-				else if(!strncmp(op_id, MOSQ_DAP_OP_PREFIX, strlen(MOSQ_DAP_OP_PREFIX)))
-				{
-					log__printf(NULL, MOSQ_LOG_INFO,
-							"DAP generic operation %s from %s not yet implemented", op_id, context->id);
+					/* DELETE additionally drops the publisher's stored will/retained data. */
+					if(!strcmp(op_id, MOSQ_DAP_OP_DELETE))
+					{
+						handle_remove_stored_messages(context->id);
+					}
 				}
-
 				else
 				{
-					/* Unrecognized right. */
-					broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Unknown right", NULL, response_topic);
+					/* Non-pending rights: immediate forward + Success/Failure. */
+					subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
+					subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, response_topic, op_id, op_info, correlation_data, correlation_data_len, 0);
+					if(offline){
+						broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Subscriber not connected", offline, response_topic);
+					}
+					else
+					{
+						broker_send_response_success(context->id, op_id, correlation_data, correlation_data_len, NULL, response_topic);
+					}
 				}
+			}
+
+			/* AUDIT: report which subscribers received the requester's matching
+				* data. The broker fulfils this directly without consulting anyone;
+				* the success payload is the comma-separated subscriber ids. No
+				* relevant subscribers is a failure. */
+			else if(!strcmp(op_id, MOSQ_DAP_OP_AUDIT))
+			{
+				struct dr_sublist *relevant = dr__find_relevant_subscribers(context->id,
+						op_topic_filters, op_purpose_filters, op_client_filters,
+						op_before, op_after);
+				if(!relevant)
+				{
+					broker_send_response_failure(context->id, op_id, correlation_data,
+							correlation_data_len, "No relevant subscribers", NULL, response_topic);
+				}
+				else
+				{
+					size_t len = 0;
+					for(struct dr_sublist *s = relevant; s; s = s->next){
+						len += strlen(s->sub_id) + 1; /* id plus a separator/terminator */
+					}
+					char *payload = mosquitto_calloc(1, len + 1);
+					if(payload)
+					{
+						for(struct dr_sublist *s = relevant; s; s = s->next){
+							strcat(payload, s->sub_id);
+							if(s->next) strcat(payload, ",");
+						}
+						broker_send_response_success(context->id, op_id, correlation_data,
+								correlation_data_len, payload, response_topic);
+						mosquitto_FREE(payload);
+					}
+					dr__free_sublist(relevant);
+				}
+			}
+
+			/* HISTORY and UPDATE are subscriber-involving like DELETE/RESTRICT but
+				* do not apply to in-flight messages, so they get no pending-ops entry.
+				* Allocate an op id, forward to the relevant subscribers and track the
+				* deadline. UPDATE's replacement payload rides along in the forwarded
+				* request (stored->data.payload). */
+			else if(!strcmp(op_id, MOSQ_DAP_OP_HISTORY) || !strcmp(op_id, MOSQ_DAP_OP_UPDATE))
+			{
+				uint64_t hu_op_id = dap_pending_ops_allocate_op_id(db.dap_pending_ops);
+				struct dr_sublist *relevant = dr__find_relevant_subscribers(context->id,
+						op_topic_filters, op_purpose_filters, op_client_filters,
+						op_before, op_after);
+				time_t deadline = stored->dap_recv_time + MOSQ_DAP_DEFAULT_DEADLINE_SECS;
+				broker_dispatch_pending_operation(context->id, op_id, hu_op_id,
+						relevant, &stored->data, response_topic, op_info,
+						correlation_data, correlation_data_len, deadline);
+				dr__free_sublist(relevant);
+			}
+
+			/* Generic operator-defined operation ("O:" prefix), also not implemented. */
+			else if(!strncmp(op_id, MOSQ_DAP_OP_PREFIX, strlen(MOSQ_DAP_OP_PREFIX)))
+			{
+				log__printf(NULL, MOSQ_LOG_INFO,
+						"DAP generic operation %s from %s not yet implemented", op_id, context->id);
+			}
+
+			else
+			{
+				/* Unrecognized right. */
+				broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Unknown right", NULL, response_topic);
 			}
 		}
 	}

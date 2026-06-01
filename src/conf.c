@@ -319,9 +319,6 @@ static void config__init_reload(struct mosquitto__config *config)
 	config->sys_interval = 10;
 	config->upgrade_outgoing_qos = false;
 	config->packet_buffer_size = 4096;
-	config->use_protection_framework = false;
-	config->purpose_filtering = false;
-	config->purpose_filter_method = MOSQ_DAP_NONE;
 	config->metadata_operation_handling = false;
 }
 
@@ -2495,22 +2492,8 @@ static int config__read_file_core(struct mosquitto__config *config, bool reload,
 #else
 					log__printf(NULL, MOSQ_LOG_WARNING, "Warning: Websockets support not available.");
 #endif
-				}else if(!strcmp(token, "purpose_filtering_method")){
-					if(conf__parse_int(&token, token, &tmp_int, &saveptr)) return MOSQ_ERR_INVAL;
-					if(tmp_int < MOSQ_DAP_NONE || tmp_int > MOSQ_DAP_TOPIC_REG){
-						log__printf(NULL, MOSQ_LOG_WARNING, "Error: Invalid method provided for purpose filtering.");
-						return MOSQ_ERR_INVAL;
-					}
-					config->purpose_filtering = true;
-					config->purpose_filter_method = tmp_int;
-					if(tmp_int == MOSQ_DAP_TOPIC_REG){
-						log__printf(NULL, MOSQ_LOG_WARNING,
-							"Warning: purpose_filtering_method=3 (registration by topic): subscriber-side SP registration by topic is no longer supported. Publisher MP registration by topic ($DAP/MP_reg/) still works, but subscribers receive no purpose filtering under this method.");
-					}
 				}else if(!strcmp(token, "use_metadata_operation_support")){
 					if(conf__parse_bool(&token, token, &config->metadata_operation_handling, &saveptr)) return MOSQ_ERR_INVAL;
-				}else if(!strcmp(token, "use_protection_framework")){
-					if(conf__parse_bool(&token, token, &config->use_protection_framework, &saveptr)) return MOSQ_ERR_INVAL;
 				}else{
 					log__printf(NULL, MOSQ_LOG_ERR, "Error: Unknown configuration variable '%s'.", token);
 					return MOSQ_ERR_INVAL;

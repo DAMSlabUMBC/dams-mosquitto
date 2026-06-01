@@ -111,61 +111,48 @@ enum mosq_transport_t {
 /* MQTT specification restricts client ids to a maximum of 23 characters */
 #define MOSQ_MQTT_ID_MAX_LENGTH 23
 
-/* Purpose filtering */
-#define MOSQ_DAP_NONE 0
-#define MOSQ_DAP_PER_MSG 1
-#define MOSQ_DAP_MSG_REG 2
-#define MOSQ_DAP_TOPIC_REG 3
-
-#define MOSQ_DAP_SP_KEY "DAP-SP"
-#define MOSQ_DAP_MP_KEY "DAP-MP"
-#define MOSQ_DAP_PM_TOPIC "$DAP/purpose_management"
-#define MOSQ_DAP_MP_REG_TOPIC "$DAP/MP_reg/"
-#define MOSQ_DAP_SP_REG_TOPIC "$DAP/SP_reg/"
-#define MOSQ_DAP_ALLOW_ALL_FILTER "*"
-#define MOSQ_DAP_ID_KEY "DAP-ClientID"
+/* MQTT-DAP Properties */
 #define MOSQ_DAP_CONSENT_KEY "DAP-Allow"
+#define MOSQ_DAP_ID_KEY "DAP-ClientID"
+#define MOSQ_DAP_TIMESTAMP_KEY "DAP-Timestamp" /* broker-assigned message receipt time (decimal seconds) */
+#define MOSQ_DAP_MP_KEY "DAP-MP"
+#define MOSQ_DAP_SP_KEY "DAP-SP"
+#define MOSQ_DAP_OP_ID_KEY "DAP-OpId"         /* broker-assigned numeric operation id (decimal); correlates echoes, forwards and status */
 #define MOSQ_DAP_OP_KEY "DAP-OpType"
-#define MOSQ_DAP_OP_INFO_KEY "DAP-OpInfo"
+#define MOSQ_DAP_DEADLINE_KEY "DAP-Deadline".
 #define MOSQ_DAP_OP_TFS_KEY "DAP-OpTFs"         /* operation topic filters (comma-separated) */
 #define MOSQ_DAP_OP_PFS_KEY "DAP-OpPFs"         /* operation purpose filters (comma-separated) */
 #define MOSQ_DAP_OP_CLIENTS_KEY "DAP-OpClients" /* operation client filters (comma-separated) */
-#define MOSQ_DAP_REASON_KEY "DAP-Reason"
-#define MOSQ_DAP_TIMESTAMP_KEY "DAP-Timestamp" /* broker-assigned message receipt time (decimal seconds) */
 #define MOSQ_DAP_OP_BEFORE_KEY "DAP-OpBefore" /* operation applies to data received at or before this time (decimal seconds; absent/0 = no upper bound) */
 #define MOSQ_DAP_OP_AFTER_KEY "DAP-OpAfter"   /* operation applies to data received at or after this time (decimal seconds; absent/0 = no lower bound) */
-#define MOSQ_DAP_OP_ID_KEY "DAP-OpId"         /* broker-assigned numeric operation id (decimal); correlates echoes, forwards and status */
-#define MOSQ_DAP_DEADLINE_KEY "DAP-Deadline"
 #define MOSQ_DAP_STATUS_KEY "DAP-Status"
-#define MOSQ_DAP_UNREACHED_CLIENTS_KEY "DAP-UnreachedClients"
-#define MOSQ_DAP_TOPIC_OR "OR"     
-#define MOSQ_DAP_TOPIC_ORS "ORS"    
-#define MOSQ_DAP_TOPIC_OSYS "$OSYS"  
-#define MOSQ_DAP_TOPIC_ON "ON"    
-#define MOSQ_DAP_TOPIC_ONP "ONP"  
-#define MOSQ_DAP_OP_PURPOSE "DAP_OP"    /* paper 5.1: operation-processing consent value (was "DAP_op") */
-#define MOSQ_DAP_MAX_FILTERS_PER_SUB 100
-#define MOSQ_DAP_WAIT_SECS_FOR_UNREACHED_CLIENTS 0
-#define MOSQ_DAP_DEFAULT_DEADLINE_SECS 30 /* operation deadline = receipt time + this; TODO make configurable */
+#define MOSQ_DAP_REASON_KEY "DAP-Reason"
 
-/* Supported operations */
-#define MOSQ_DAP_RIGHT_INFORMED "Informed"
-#define MOSQ_DAP_RIGHT_INFORMED_REG "Informed-Reg"
-#define MOSQ_DAP_RIGHT_ACCESS "Access"
-#define MOSQ_DAP_RIGHT_PORTABILITY "Portability"
-#define MOSQ_DAP_RIGHT_RECTIFICATION "Rectification"
-#define MOSQ_DAP_RIGHT_ERASURE "DELETE"    /* was "Erasure" */
-#define MOSQ_DAP_RIGHT_RESTRICTION "RESTRICT" /* was "Restriction" */
-#define MOSQ_DAP_RIGHT_OBJECT "Object"
-#define MOSQ_DAP_RIGHT_AUTODECISION "AutoDecision"
+/* MQTT-DAP Topics */
+#define MOSQ_DAP_MP_REG_TOPIC "$MP_REG"
+#define MOSQ_DAP_TOPIC_OSYS "$OP_SYS"
+#define MOSQ_DAP_TOPIC_ORS "OP_REQ"    
+#define MOSQ_DAP_TOPIC_ONP "OP_NOTIF"  
 
 /* DAP operation types. DELETE and RESTRICT reuse the right constants above. The
  * rest are not yet implemented. */
 #define MOSQ_DAP_OP_AUDIT "AUDIT"
 #define MOSQ_DAP_OP_HISTORY "HISTORY"
 #define MOSQ_DAP_OP_UPDATE "UPDATE"
+#define MOSQ_DAP_OP_DELETE "DELETE"    /* was "Erasure" */
+#define MOSQ_DAP_RIGHT_RESTRICTION "RESTRICT" /* was "Restriction" */
 #define MOSQ_DAP_OP_REGISTER_INFO "REGISTER-INFO"
 #define MOSQ_DAP_OP_PREFIX "O:" /* generic operator-defined operation prefix */
+
+/* MQTT-DAP Misc */
+#define MOSQ_DAP_OP_PURPOSE "DAP_OP"    /* paper 5.1: operation-processing consent value (was "DAP_op") */
+#define MOSQ_DAP_DEFAULT_DEADLINE_SECS 30 /* operation deadline = receipt time + this; TODO make configurable */
+#define MOSQ_DAP_MAX_FILTERS_PER_SUB 100
+#define MOSQ_DAP_ALLOW_ALL_FILTER "*"
+
+/* Needs more work to refactor - TODO */
+#define MOSQ_DAP_UNREACHED_CLIENTS_KEY "DAP-UnreachedClients"
+
 
 #define MQTT_PROTOCOL_V31 3
 #define MQTT_PROTOCOL_V311 4

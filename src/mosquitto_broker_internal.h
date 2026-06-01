@@ -349,9 +349,6 @@ struct mosquitto__config {
 	int sys_interval;
 	bool upgrade_outgoing_qos;
 	char *user;
-	bool use_protection_framework;
-	bool purpose_filtering;
-	int purpose_filter_method;
 	bool metadata_operation_handling;
 #if defined(WITH_WEBSOCKETS) && WITH_WEBSOCKETS == WS_IS_LWS
 	int websockets_log_level;
@@ -442,8 +439,7 @@ struct mosquitto__base_msg{
 	enum mosquitto_msg_origin origin;
 	bool stored;
 	time_t dap_recv_time; /* DAP receipt timestamp: single reference time for ordering
-	                       * and operation matching, stamped once at PUBLISH receipt
-	                       * (only when use_protection_framework is on; 0 otherwise). */
+	                       * and operation matching, stamped once at PUBLISH receipt */
 };
 
 struct mosquitto__client_msg{

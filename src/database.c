@@ -208,7 +208,7 @@ int db__open(struct mosquitto__config *config)
 
 	/* Broker-wide map of pending publisher operations, consulted at enqueue time in
 	 * subs__process. Allocated unconditionally; it stays empty until operations are
-	 * inserted, and the enqueue-time lookup is gated on use_protection_framework. */
+	 * inserted */
 	db.dap_pending_ops = mosquitto_calloc(1, sizeof(struct dap_pending_ops));
 	if(db.dap_pending_ops){
 		dap_pending_ops_init(db.dap_pending_ops);
@@ -1621,11 +1621,10 @@ static int db__message_write_inflight_out_single(struct mosquitto *context, stru
 
 	/* Verify the message against current DAP policy just before it goes on the wire.
 	 * Gated to the publish states (QoS retransmits are in other states and flow
-	 * through untouched) and to the protection framework being on. */
-	if(db.config->use_protection_framework
-			&& (client_msg->data.state == mosq_ms_publish_qos0
+	 * through untouched) */
+	if(client_msg->data.state == mosq_ms_publish_qos0
 				|| client_msg->data.state == mosq_ms_publish_qos1
-				|| client_msg->data.state == mosq_ms_publish_qos2)){
+				|| client_msg->data.state == mosq_ms_publish_qos2){
 		if(db__dap_check_send(context, client_msg) == DAP_HOOK_HANDLED){
 			return MOSQ_ERR_SUCCESS;
 		}

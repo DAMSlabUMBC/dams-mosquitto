@@ -39,7 +39,7 @@ static void test_erasure_inserts_delete(void)
     dap_pending_ops_init(&map);
 
     uint64_t op_id = 0;
-    assert(dap_op_request_insert(&map, "pub1", MOSQ_DAP_RIGHT_ERASURE,
+    assert(dap_op_request_insert(&map, "pub1", MOSQ_DAP_OP_DELETE,
                                  "sensors/a", "*", "*", 1000, &op_id) == 0);
     assert(op_id != 0);
     assert(count_ops(&map, "pub1") == 1);
@@ -61,7 +61,7 @@ static void test_restriction_inserts_restrict(void)
     dap_pending_ops_init(&map);
 
     uint64_t op_id = 0;
-    assert(dap_op_request_insert(&map, "pub1", MOSQ_DAP_RIGHT_RESTRICTION,
+    assert(dap_op_request_insert(&map, "pub1", MOSQ_DAP_OP_RESTRICT,
                                  "sensors/a", "*", "*", 1000, &op_id) == 0);
     assert(op_id != 0);
 
@@ -82,7 +82,7 @@ static void test_filters_parsed_as_lists(void)
     struct dap_pending_ops map;
     dap_pending_ops_init(&map);
 
-    assert(dap_op_request_insert(&map, "pub1", MOSQ_DAP_RIGHT_ERASURE,
+    assert(dap_op_request_insert(&map, "pub1", MOSQ_DAP_OP_DELETE,
                                  "t/a,t/b,t/c", "*", "sub1,sub2", 1000, NULL) == 0);
 
     /* A middle topic element + a listed subscriber -> applies. */
@@ -105,7 +105,7 @@ static void test_null_filters_match_any(void)
     struct dap_pending_ops map;
     dap_pending_ops_init(&map);
 
-    assert(dap_op_request_insert(&map, "pub1", MOSQ_DAP_RIGHT_ERASURE,
+    assert(dap_op_request_insert(&map, "pub1", MOSQ_DAP_OP_DELETE,
                                  NULL, NULL, NULL, 1000, NULL) == 0);
     assert(dap_pending_ops_match(&map, "pub1", "anything", "anyhow", "anyone", 500, NULL)
            == DAP_OP_ACTION_DROP);
@@ -121,11 +121,9 @@ static void test_non_pending_operations_not_inserted(void)
     struct dap_pending_ops map;
     dap_pending_ops_init(&map);
 
-    assert(dap_op_request_insert(&map, "pub1", MOSQ_DAP_RIGHT_INFORMED,
+    assert(dap_op_request_insert(&map, "pub1", MOSQ_DAP_OP_AUDIT,
                                  "*", "*", "*", 1000, NULL) != 0);
-    assert(dap_op_request_insert(&map, "pub1", MOSQ_DAP_RIGHT_ACCESS,
-                                 "*", "*", "*", 1000, NULL) != 0);
-    assert(dap_op_request_insert(&map, "pub1", MOSQ_DAP_RIGHT_PORTABILITY,
+    assert(dap_op_request_insert(&map, "pub1", MOSQ_DAP_OP_HISTORY,
                                  "*", "*", "*", 1000, NULL) != 0);
     assert(count_ops(&map, "pub1") == 0);
 
@@ -139,9 +137,9 @@ static void test_bad_args(void)
     struct dap_pending_ops map;
     dap_pending_ops_init(&map);
 
-    assert(dap_op_request_insert(NULL, "pub1", MOSQ_DAP_RIGHT_ERASURE,
+    assert(dap_op_request_insert(NULL, "pub1", MOSQ_DAP_OP_DELETE,
                                  "*", "*", "*", 1000, NULL) != 0);
-    assert(dap_op_request_insert(&map, NULL, MOSQ_DAP_RIGHT_ERASURE,
+    assert(dap_op_request_insert(&map, NULL, MOSQ_DAP_OP_DELETE,
                                  "*", "*", "*", 1000, NULL) != 0);
     assert(dap_op_request_insert(&map, "pub1", NULL,
                                  "*", "*", "*", 1000, NULL) != 0);

@@ -169,7 +169,6 @@ void loop__update_next_event(time_t new_ms)
  * tracked; db.now_real_s is refreshed each iteration by mux__handle. */
 static void dap_deadline__check(void)
 {
-	if(!db.config->use_protection_framework) return;
 	if(!db.dap_deadline_tracker) return;
 
 	struct dap_expired_op *expired = dap_deadline_tracker_check_expired(db.dap_deadline_tracker, db.now_real_s);

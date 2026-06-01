@@ -100,69 +100,51 @@ int handle__subscribe(struct mosquitto *context)
 		}
 
 		/* Check for purpose filtering which requires registration at subscribe-time by the subscriber */
-		if(db.config->purpose_filtering 
-			&& (db.config->purpose_filter_method == MOSQ_DAP_PER_MSG || db.config->purpose_filter_method == MOSQ_DAP_MSG_REG))
+		// Since there can be multiple user properties, loop through entire list
+		const mosquitto_property* curr_prop_ptr = properties;
+		while(curr_prop_ptr)
 		{
-			// Since there can be multiple user properties, loop through entire list
-			const mosquitto_property* curr_prop_ptr = properties;
-			while(curr_prop_ptr)
+			/* Parse current property */
+			char* name;
+			char* value;
+
+			/* This automatically increments the curr_prop_ptr to the next user property */
+			curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false);
+			if(curr_prop_ptr)
 			{
-				/* Parse current property */
-				char* name;
-				char* value;
-
-				/* This automatically increments the curr_prop_ptr to the next user property */
-				curr_prop_ptr = mosquitto_property_read_string_pair(curr_prop_ptr, MQTT_PROP_USER_PROPERTY, &name, &value, false);
-				if(curr_prop_ptr)
+				/* Check if this is a purpose filtering property and assign if so */
+				if(!strcmp(name, MOSQ_DAP_SP_KEY))
 				{
-					/* Check if this is a purpose filtering property and assign if so */
-					if(!strcmp(name, MOSQ_DAP_SP_KEY))
+					/* Parse all purposes this filter describes */
+					uint32_t num_results = 0;
+					char** purposes = parse_purpose_filter(value, &num_results);
+
+					for(uint32_t i = 0; i < num_results; i++)
 					{
-						/* Parse all purposes this filter describes */
-						uint32_t num_results = 0;
-						char** purposes = parse_purpose_filter(value, &num_results);
-
-						for(uint32_t i = 0; i < num_results; i++)
+						/* Verify this isn't a dupe */
+						bool found_dupe = false;
+						for(uint32_t j = 0; j < purpose_filter_count; j++)
 						{
-							/* Verify this isn't a dupe */
-							bool found_dupe = false;
-							for(uint32_t j = 0; j < purpose_filter_count; j++)
+							if(strcmp(purpose_filters[j], purposes[i]) == 0)
 							{
-								if(strcmp(purpose_filters[j], purposes[i]) == 0)
-								{
-									found_dupe = true;
-									break;
-								}
+								found_dupe = true;
+								break;
 							}
+						}
 
-							/* Skip if it is */
-							if(found_dupe)
-							{
-								continue;
-							}
+						/* Skip if it is */
+						if(found_dupe)
+						{
+							continue;
+						}
 
-							/* Verify we haven't exceeded the maximum */
-							if(purpose_filter_count == MOSQ_DAP_MAX_FILTERS_PER_SUB)
-							{
-								log__printf(NULL, MOSQ_LOG_INFO,
-									"Too many purpose filters from %s, disconnecting.",
-									context->address);
+						/* Verify we haven't exceeded the maximum */
+						if(purpose_filter_count == MOSQ_DAP_MAX_FILTERS_PER_SUB)
+						{
+							log__printf(NULL, MOSQ_LOG_INFO,
+								"Too many purpose filters from %s, disconnecting.",
+								context->address);
 
-									/* Free purpose struct and purposes */
-									for(uint32_t j = 0; j < num_results; j++)
-									{
-										mosquitto_FREE(purposes[j]);
-									}
-									mosquitto_FREE(purposes);
-
-									mosquitto_property_free_all(&properties);
-									return MOSQ_ERR_MALFORMED_PACKET;
-							}
-
-							/* Store an independent, correctly-sized copy of the filter. */
-							char* filter = purpose_filter_store_dup(purposes[i]);
-							if(!filter)
-							{
 								/* Free purpose struct and purposes */
 								for(uint32_t j = 0; j < num_results; j++)
 								{
@@ -171,18 +153,32 @@ int handle__subscribe(struct mosquitto *context)
 								mosquitto_FREE(purposes);
 
 								mosquitto_property_free_all(&properties);
-								return MOSQ_ERR_NOMEM;
-							}
-							purpose_filters[purpose_filter_count] = filter;
-							purpose_filter_count++;
+								return MOSQ_ERR_MALFORMED_PACKET;
 						}
 
-						/* Free purpose struct. Purposes themselves are free'd later*/
-						mosquitto_FREE(purposes);
+						/* Store an independent, correctly-sized copy of the filter. */
+						char* filter = purpose_filter_store_dup(purposes[i]);
+						if(!filter)
+						{
+							/* Free purpose struct and purposes */
+							for(uint32_t j = 0; j < num_results; j++)
+							{
+								mosquitto_FREE(purposes[j]);
+							}
+							mosquitto_FREE(purposes);
+
+							mosquitto_property_free_all(&properties);
+							return MOSQ_ERR_NOMEM;
+						}
+						purpose_filters[purpose_filter_count] = filter;
+						purpose_filter_count++;
 					}
 
-					curr_prop_ptr = curr_prop_ptr->next;
+					/* Free purpose struct. Purposes themselves are free'd later*/
+					mosquitto_FREE(purposes);
 				}
+
+				curr_prop_ptr = curr_prop_ptr->next;
 			}
 		}
 		
@@ -191,17 +187,15 @@ int handle__subscribe(struct mosquitto *context)
 		 * TOPIC_REG and framework-on-without-purpose-filtering configs. The
 		 * per-subscription requirement (with op-system-topic exemptions) is enforced
 		 * in the topic loop below. */
-		if(db.config->use_protection_framework){
-			const mosquitto_property *sp_scan = properties;
-			char *sp_name = NULL, *sp_value = NULL;
-			while((sp_scan = mosquitto_property_read_string_pair(sp_scan, MQTT_PROP_USER_PROPERTY, &sp_name, &sp_value, false)) != NULL){
-				if(sp_name && !strcmp(sp_name, MOSQ_DAP_SP_KEY)){
-					has_sp = true;
-				}
-				mosquitto_FREE(sp_name);
-				mosquitto_FREE(sp_value);
-				sp_scan = sp_scan->next;
+		const mosquitto_property *sp_scan = properties;
+		char *sp_name = NULL, *sp_value = NULL;
+		while((sp_scan = mosquitto_property_read_string_pair(sp_scan, MQTT_PROP_USER_PROPERTY, &sp_name, &sp_value, false)) != NULL){
+			if(sp_name && !strcmp(sp_name, MOSQ_DAP_SP_KEY)){
+				has_sp = true;
 			}
+			mosquitto_FREE(sp_name);
+			mosquitto_FREE(sp_value);
+			sp_scan = sp_scan->next;
 		}
 
 		mosquitto_property_free_all(&properties);
@@ -301,37 +295,35 @@ int handle__subscribe(struct mosquitto *context)
 			/* MQTT-DAP subscribe-time policy. Gated on the protection framework so
 			 * non-DAP deployments and the existing test-suite are unaffected. On
 			 * violation the SUBSCRIBE is malformed and the connection is dropped. */
-			if(db.config->use_protection_framework)
-			{
-				/* Paper 5.1: keyed topics may only be subscribed by the client they are
-				 * keyed to. ORS/<sub> is a subscriber's operation-request inbox and
-				 * ONP/<pub> a publisher's notification inbox. */
-				const char *keyed_id = NULL;
-				if(!strncmp(sub.topic_filter, MOSQ_DAP_TOPIC_ORS "/", strlen(MOSQ_DAP_TOPIC_ORS) + 1)){
-					keyed_id = sub.topic_filter + strlen(MOSQ_DAP_TOPIC_ORS) + 1;
-				}else if(!strncmp(sub.topic_filter, MOSQ_DAP_TOPIC_ONP "/", strlen(MOSQ_DAP_TOPIC_ONP) + 1)){
-					keyed_id = sub.topic_filter + strlen(MOSQ_DAP_TOPIC_ONP) + 1;
-				}
-				if(keyed_id && (!context->id || strcmp(keyed_id, context->id) != 0)){
-					log__printf(NULL, MOSQ_LOG_INFO,
-						"Subscription from %s to keyed topic %s does not match the client id, rejecting.",
-						context->id, sub.topic_filter);
-					mosquitto_FREE(sub.topic_filter);
-					mosquitto_FREE(payload);
-					return MOSQ_ERR_MALFORMED_PACKET;
-				}
 
-				/* Paper 4.3: every data subscription must declare an SP. Operation-system
-				 * topics ($OSYS, $DAP/* control, the keyed inboxes, OR/ON) are exempt.
-				 * SP is an MQTT v5 user property, so the requirement applies to v5 only. */
-				if(context->protocol == mosq_p_mqtt5 && !has_sp && !dap_is_op_system_topic(sub.topic_filter)){
-					log__printf(NULL, MOSQ_LOG_INFO,
-						"Subscription from %s to %s lacks a DAP-SP declaration, rejecting.",
-						context->id, sub.topic_filter);
-					mosquitto_FREE(sub.topic_filter);
-					mosquitto_FREE(payload);
-					return MOSQ_ERR_MALFORMED_PACKET;
-				}
+			/* Paper 5.1: keyed topics may only be subscribed by the client they are
+				* keyed to. ORS/<sub> is a subscriber's operation-request inbox and
+				* ONP/<pub> a publisher's notification inbox. */
+			const char *keyed_id = NULL;
+			if(!strncmp(sub.topic_filter, MOSQ_DAP_TOPIC_ORS "/", strlen(MOSQ_DAP_TOPIC_ORS) + 1)){
+				keyed_id = sub.topic_filter + strlen(MOSQ_DAP_TOPIC_ORS) + 1;
+			}else if(!strncmp(sub.topic_filter, MOSQ_DAP_TOPIC_ONP "/", strlen(MOSQ_DAP_TOPIC_ONP) + 1)){
+				keyed_id = sub.topic_filter + strlen(MOSQ_DAP_TOPIC_ONP) + 1;
+			}
+			if(keyed_id && (!context->id || strcmp(keyed_id, context->id) != 0)){
+				log__printf(NULL, MOSQ_LOG_INFO,
+					"Subscription from %s to keyed topic %s does not match the client id, rejecting.",
+					context->id, sub.topic_filter);
+				mosquitto_FREE(sub.topic_filter);
+				mosquitto_FREE(payload);
+				return MOSQ_ERR_MALFORMED_PACKET;
+			}
+
+			/* Paper 4.3: every data subscription must declare an SP. Operation-system
+				* topics ($OSYS, $DAP/* control, the keyed inboxes, OR/ON) are exempt.
+				* SP is an MQTT v5 user property, so the requirement applies to v5 only. */
+			if(context->protocol == mosq_p_mqtt5 && !has_sp && !dap_is_op_system_topic(sub.topic_filter)){
+				log__printf(NULL, MOSQ_LOG_INFO,
+					"Subscription from %s to %s lacks a DAP-SP declaration, rejecting.",
+					context->id, sub.topic_filter);
+				mosquitto_FREE(sub.topic_filter);
+				mosquitto_FREE(payload);
+				return MOSQ_ERR_MALFORMED_PACKET;
 			}
 
 			/* Setup purpose filters */

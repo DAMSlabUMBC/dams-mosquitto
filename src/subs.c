@@ -151,76 +151,64 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 			continue;
 		}
 
-		/* Purpose filtering */
-		if(db.config->use_protection_framework)
+		if(!stored->data.has_purpose_filter)
 		{
-			if(db.config->purpose_filtering)
+			leaf = leaf->next;
+			continue;
+		}
+
+		if(!strcmp(stored->data.purpose_filter, MOSQ_DAP_OP_PURPOSE))
+		{
+			record = false;
+		}
+
+		bool allow_all_purposes = ((strcmp(stored->data.purpose_filter, "*") == 0));
+
+		/* Retrieve the purpose filter for the subscriber */
+		if(!allow_all_purposes)
+		{
+			/* Reject if the subscription has no purpose filter */
+			if(leaf->purpose_filter_count <= 0)
 			{
-				if(!stored->data.has_purpose_filter)
-				{
-					leaf = leaf->next;
-					continue;
-				}
-
-				if(!strcmp(stored->data.purpose_filter, MOSQ_DAP_OP_PURPOSE))
-				{
-					record = false;
-				}
-
-				bool allow_all_purposes = ((strcmp(stored->data.purpose_filter, "*") == 0));
-
-				/* (1) Per Message Filtering and (2) Message Registration */
-				if(db.config->purpose_filter_method == MOSQ_DAP_PER_MSG || db.config->purpose_filter_method == MOSQ_DAP_MSG_REG)
-				{
-					if(!allow_all_purposes)
-					{
-						/* Reject if the subscription has no purpose filter */
-						if(leaf->purpose_filter_count <= 0)
-						{
-							leaf = leaf->next;
-							continue;
-						}
-
-						/* Match the message filter with the subscription; a "*" entry
-						 * in the subscription's filter list matches any publisher purpose. */
-						bool filter_found = false;
-						for(uint8_t i = 0; i < leaf->purpose_filter_count; i++)
-						{
-							if(strcmp(leaf->purpose_filters[i], "*") == 0
-								|| strcmp(leaf->purpose_filters[i], stored->data.purpose_filter) == 0)
-							{
-								filter_found = true;
-								break;
-							}
-						}
-
-						if(!filter_found)
-						{
-							leaf = leaf->next;
-							continue;
-						}
-					}
-				}
-				/* (3) Topic Registration (MOSQ_DAP_TOPIC_REG) no longer matches
-				 * purposes subscriber-side: the $SP_REG path and SP registry were
-				 * removed, so no subscriber-side purpose filtering applies here. */
+				leaf = leaf->next;
+				continue;
 			}
 
-			if(db.config->metadata_operation_handling)
+			/* Match the message filter with the subscription; a "*" entry
+				* in the subscription's filter list matches any publisher purpose. */
+			bool filter_found = false;
+			for(uint8_t i = 0; i < leaf->purpose_filter_count; i++)
 			{
-				/* If this is the first time a publisher has sent data, to a subscriber
-				they need to trigger right to be informed */
-				if(!ri__has_sent_to_pub(source_id, leaf->context->id))
+				if(strcmp(leaf->purpose_filters[i], "*") == 0
+					|| strcmp(leaf->purpose_filters[i], stored->data.purpose_filter) == 0)
 				{
-					const char *info = ri__lookup_info(leaf->context->id);
+					filter_found = true;
+					break;
+				}
+			}
 
-					if(info){
-						broker_send_response_success(source_id, MOSQ_DAP_RIGHT_INFORMED, NULL, 0, info, NULL);
-						ri__mark_sent_to_pub(source_id, leaf->context->id);
-					}
+			if(!filter_found)
+			{
+				leaf = leaf->next;
+				continue;
+			}
+		}
+
+		if(db.config->metadata_operation_handling)
+		{
+			/* If this is the first time a publisher has sent data, to a subscriber
+			they need to trigger right to be informed */
+			if(!ri__has_sent_to_pub(source_id, leaf->context->id))
+			{
+				const char *info = ri__lookup_info(leaf->context->id);
+
+				if(info){
+					broker_send_response_success(source_id, MOSQ_DAP_OP_AUDIT, NULL, 0, info, NULL);
+					ri__mark_sent_to_pub(source_id, leaf->context->id);
 				}
 			}
 		}
+
 		uint16_t sent_mid = 0;
 		rc2 = subs__send(leaf, topic, qos, retain, stored, &sent_mid);
 
@@ -231,7 +219,7 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 		 * unstamped. The send path still drives off the per-client queue. The stored
 		 * message is borrowed, not owned by the queue. */
 		enum dap_op_action dap_action = DAP_OP_ACTION_NONE;
-		if(db.config->use_protection_framework && leaf->context && leaf->context->id){
+		if(leaf->context && leaf->context->id){
 			if(!leaf->dap_queues){
 				leaf->dap_queues = mosquitto_calloc(1, sizeof(struct dap_subscription_queues));
 				if(leaf->dap_queues){
@@ -248,7 +236,7 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 
 		/* A DELETE-matched message was not delivered, so don't record it as having
 		 * reached this recipient. */
-		if(db.config->use_protection_framework && db.config->metadata_operation_handling
+		if(db.config->metadata_operation_handling
 				&& record && dap_action != DAP_OP_ACTION_DROP)
 		{
 			dr__record_recipient(stored->data.source_id, topic, leaf->context->id, stored->dap_recv_time);

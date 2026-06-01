@@ -16,8 +16,8 @@ extern "C" {
  * Decode a DAP operation request and, for an erasure or restriction, insert the
  * matching pending operation into the broker-wide map.
  *
- * operation is the DAP-OpType value; only MOSQ_DAP_RIGHT_ERASURE (DAP_OP_DELETE)
- * and MOSQ_DAP_RIGHT_RESTRICTION (DAP_OP_RESTRICT) are pending operations. Any
+ * operation is the DAP-OpType value; only MOSQ_DAP_OP_DELETE
+ * and MOSQ_DAP_OP_RESTRICT are pending operations. Any
  * other value is left to the existing right handlers and nothing is inserted. The
  * filter strings are the DAP-OpTFs / DAP-OpPFs / DAP-OpClients lists (NULL or ""
  * means any) and are forwarded to dap_pending_ops_insert_operation, which copies

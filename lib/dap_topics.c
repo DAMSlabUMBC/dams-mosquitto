@@ -27,8 +27,6 @@ bool dap_is_op_system_topic(const char *topic)
     if(topic_in_namespace(topic, MOSQ_DAP_TOPIC_OSYS)) return true; /* $OSYS */
 
     /* Operation request/notification topics, bare or keyed as <base>/<id>. */
-    if(topic_in_namespace(topic, MOSQ_DAP_TOPIC_OR))  return true;  /* OR  */
-    if(topic_in_namespace(topic, MOSQ_DAP_TOPIC_ON))  return true;  /* ON  */
     if(topic_in_namespace(topic, MOSQ_DAP_TOPIC_ORS)) return true;  /* ORS */
     if(topic_in_namespace(topic, MOSQ_DAP_TOPIC_ONP)) return true;  /* ONP */
 

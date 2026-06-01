@@ -20,9 +20,9 @@ int dap_op_request_insert(struct dap_pending_ops *map,
     /* Only erasure and restriction become pending operations; the broker's existing
      * right handlers deal with every other DAP-OpType string. */
     enum dap_op_type type;
-    if(!strcmp(operation, MOSQ_DAP_RIGHT_ERASURE)){
+    if(!strcmp(operation, MOSQ_DAP_OP_DELETE)){
         type = DAP_OP_DELETE;
-    }else if(!strcmp(operation, MOSQ_DAP_RIGHT_RESTRICTION)){
+    }else if(!strcmp(operation, MOSQ_DAP_OP_RESTRICT)){
         type = DAP_OP_RESTRICT;
     }else{
         return 1;

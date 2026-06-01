@@ -301,9 +301,6 @@ struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub
             mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
                 MOSQ_DAP_OP_KEY, mosquitto_strdup(op_id));
 
-            mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
-                MOSQ_DAP_OP_INFO_KEY, mosquitto_strdup(op_info));
-
             /* For a pending op (DELETE/RESTRICT) carry the broker-assigned numeric id so
              * the subscriber can reference it in its status reply. */
             if(op_id_num != 0){
