@@ -20,7 +20,12 @@ int dap_stamp_and_enqueue(struct dap_subscription_queues *queues,
     if(!queues) return 1;
 
     /* MP version is keyed by (publisher, topic); an unregistered topic looks up as 0. */
-    uint32_t mp_version = mp__lookup_version(publisher_id, topic);
+    uint32_t mp_version = 0;
+    struct mp_entry *stored = mp__lookup(publisher_id, topic);
+    if(stored)
+    {
+        mp_version = stored->version;
+    }
 
     /* Consult the pending-op map for this publisher. A NULL map yields NONE. */
     uint64_t op_id = 0;

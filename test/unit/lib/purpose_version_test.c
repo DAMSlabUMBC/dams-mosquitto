@@ -25,26 +25,32 @@ static void test_mp_version_increments_on_update(void)
     mp_registry_init();
 
     /* Unknown topic has no version yet. */
-    assert(mp__lookup_version("pub1", "sensors/temp") == 0);
+    assert(mp__lookup("pub1", "sensors/temp") == NULL);
 
     /* First registration starts at 1. */
     mp__register_topic("pub1", "sensors/temp", "ads/targeted");
-    assert(mp__lookup_version("pub1", "sensors/temp") == 1);
-    assert(!strcmp(mp__lookup_topic("pub1", "sensors/temp"), "ads/targeted"));
+
+    struct mp_entry *stored = mp__lookup("pub1", "sensors/temp");
+    assert(stored->version == 1);
+    assert(!strcmp(stored->purpose_filter, "ads/targeted"));
 
     /* Each update of the same pub/topic pair bumps the version by one... */
     mp__register_topic("pub1", "sensors/temp", "billing/electricity");
-    assert(mp__lookup_version("pub1", "sensors/temp") == 2);
+    stored = mp__lookup("pub1", "sensors/temp");
+    assert(stored->version == 2);
     /* ...and the stored value still tracks the latest write. */
-    assert(!strcmp(mp__lookup_topic("pub1", "sensors/temp"), "billing/electricity"));
+    assert(!strcmp(stored->purpose_filter, "billing/electricity"));
 
     mp__register_topic("pub1", "sensors/temp", "ads/targeted");
-    assert(mp__lookup_version("pub1", "sensors/temp") == 3);
+    stored = mp__lookup("pub1", "sensors/temp");
+    assert(stored->version == 3);
 
     /* A different topic versions independently of the first. */
     mp__register_topic("pub1", "sensors/humidity", "research");
-    assert(mp__lookup_version("pub1", "sensors/humidity") == 1);
-    assert(mp__lookup_version("pub1", "sensors/temp") == 3);
+    stored = mp__lookup("pub1", "sensors/humidity");
+    assert(stored->version == 1);
+    stored = mp__lookup("pub1", "sensors/temp");
+    assert(stored->version == 3);
 
     mp_registry_cleanup();
     printf("ok - MP version starts at 1 and increments on each update\n");
@@ -92,15 +98,17 @@ static void test_mp_registration_topic_path_bumps_version(void)
     assert(!strcmp(rt, "sensors/temp"));
     assert(!strcmp(val, "ads/targeted"));
     mp__register_topic(pub, rt, val);
-    assert(mp__lookup_version(pub, rt) == 1);
-    assert(!strcmp(mp__lookup_topic(pub, rt), "ads/targeted"));
+    struct mp_entry *stored = mp__lookup(pub, rt);
+    assert(stored->version == 1);
+    assert(!strcmp(stored->purpose_filter, "ads/targeted"));
 
     /* Re-registration for the same real topic -> version 2, latest value stored. */
     parse_reg_topic(MOSQ_DAP_MP_REG_TOPIC "sensors/temp[billing/electricity]",
                     MOSQ_DAP_MP_REG_TOPIC, rt, val);
     mp__register_topic(pub, rt, val);
-    assert(mp__lookup_version(pub, rt) == 2);
-    assert(!strcmp(mp__lookup_topic(pub, rt), "billing/electricity"));
+    stored = mp__lookup(pub, rt);
+    assert(stored->version == 2);
+    assert(!strcmp(stored->purpose_filter, "billing/electricity"));
 
     mp_registry_cleanup();
     printf("ok - MP_reg topic path parses and bumps version on re-registration\n");

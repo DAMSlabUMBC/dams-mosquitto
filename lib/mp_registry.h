@@ -7,6 +7,14 @@
 extern "C" {
 #endif
 
+/* A single entry in the hash chain. */
+struct mp_entry {
+    char *topic;           /* "sensors/temp" */
+    char *purpose_filter;  /* "ads/targeted" */
+    uint32_t version;      /* MP version, starts at 1 and bumps on every update */
+    struct mp_entry *next; /* pointer to next in the chain */
+};
+
 /* Initializes the MP registry */
 void mp_registry_init(void);
 
@@ -18,10 +26,7 @@ void mp__register_topic(const char* id, const char *topic, const char *mp_value)
 
 /* Looks up the stored purpose filter for a given topic. */
 
-char *mp__lookup_topic(const char* id, const char *topic);
-
-/* Returns the stored MP version for a topic (starts at 1, bumps on update), or 0 if none. */
-uint32_t mp__lookup_version(const char* id, const char *topic);
+struct mp_entry *mp__lookup(const char* id, const char *topic);
 
 #ifdef __cplusplus
 }

@@ -119,7 +119,7 @@ enum mosq_transport_t {
 #define MOSQ_DAP_SP_KEY "DAP-SP"
 #define MOSQ_DAP_OP_ID_KEY "DAP-OpId"         /* broker-assigned numeric operation id (decimal); correlates echoes, forwards and status */
 #define MOSQ_DAP_OP_KEY "DAP-OpType"
-#define MOSQ_DAP_DEADLINE_KEY "DAP-Deadline".
+#define MOSQ_DAP_DEADLINE_KEY "DAP-Deadline"
 #define MOSQ_DAP_OP_TFS_KEY "DAP-OpTFs"         /* operation topic filters (comma-separated) */
 #define MOSQ_DAP_OP_PFS_KEY "DAP-OpPFs"         /* operation purpose filters (comma-separated) */
 #define MOSQ_DAP_OP_CLIENTS_KEY "DAP-OpClients" /* operation client filters (comma-separated) */
@@ -140,7 +140,7 @@ enum mosq_transport_t {
 #define MOSQ_DAP_OP_HISTORY "HISTORY"
 #define MOSQ_DAP_OP_UPDATE "UPDATE"
 #define MOSQ_DAP_OP_DELETE "DELETE"    /* was "Erasure" */
-#define MOSQ_DAP_RIGHT_RESTRICTION "RESTRICT" /* was "Restriction" */
+#define MOSQ_DAP_OP_RESTRICT "RESTRICT" /* was "Restriction" */
 #define MOSQ_DAP_OP_REGISTER_INFO "REGISTER-INFO"
 #define MOSQ_DAP_OP_PREFIX "O:" /* generic operator-defined operation prefix */
 

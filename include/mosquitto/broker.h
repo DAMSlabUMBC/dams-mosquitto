@@ -95,6 +95,7 @@ struct mosquitto_base_msg {
 	char *topic;
 	bool has_purpose_filter;
 	char *purpose_filter;
+	uint32_t purpose_filter_version;
 	void *payload;
 	char *source_id;
 	char *source_username;

@@ -172,6 +172,7 @@ int handle__subscribe(struct mosquitto *context)
 						}
 						purpose_filters[purpose_filter_count] = filter;
 						purpose_filter_count++;
+						has_sp = true;
 					}
 
 					/* Free purpose struct. Purposes themselves are free'd later*/
@@ -180,22 +181,6 @@ int handle__subscribe(struct mosquitto *context)
 
 				curr_prop_ptr = curr_prop_ptr->next;
 			}
-		}
-		
-		/* MQTT-DAP (paper 4.3): record whether the packet carries an SP declaration.
-		 * Independent of the purpose-filtering method above, so it also covers
-		 * TOPIC_REG and framework-on-without-purpose-filtering configs. The
-		 * per-subscription requirement (with op-system-topic exemptions) is enforced
-		 * in the topic loop below. */
-		const mosquitto_property *sp_scan = properties;
-		char *sp_name = NULL, *sp_value = NULL;
-		while((sp_scan = mosquitto_property_read_string_pair(sp_scan, MQTT_PROP_USER_PROPERTY, &sp_name, &sp_value, false)) != NULL){
-			if(sp_name && !strcmp(sp_name, MOSQ_DAP_SP_KEY)){
-				has_sp = true;
-			}
-			mosquitto_FREE(sp_name);
-			mosquitto_FREE(sp_value);
-			sp_scan = sp_scan->next;
 		}
 
 		mosquitto_property_free_all(&properties);
@@ -315,7 +300,7 @@ int handle__subscribe(struct mosquitto *context)
 			}
 
 			/* Paper 4.3: every data subscription must declare an SP. Operation-system
-				* topics ($OSYS, $DAP/* control, the keyed inboxes, OR/ON) are exempt.
+				* topics ($OSYS, $MP_REG, the keyed inboxes) are exempt.
 				* SP is an MQTT v5 user property, so the requirement applies to v5 only. */
 			if(context->protocol == mosq_p_mqtt5 && !has_sp && !dap_is_op_system_topic(sub.topic_filter)){
 				log__printf(NULL, MOSQ_LOG_INFO,

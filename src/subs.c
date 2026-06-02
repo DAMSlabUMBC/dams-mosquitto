@@ -203,7 +203,7 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 				const char *info = ri__lookup_info(leaf->context->id);
 
 				if(info){
-					broker_send_response_success(source_id, MOSQ_DAP_OP_AUDIT, NULL, 0, info, NULL);
+					broker_send_response_success(source_id, MOSQ_DAP_OP_REGISTER_INFO, NULL, 0, info, NULL);
 					ri__mark_sent_to_pub(source_id, leaf->context->id);
 				}
 			}

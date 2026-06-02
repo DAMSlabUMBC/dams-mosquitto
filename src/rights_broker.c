@@ -82,7 +82,7 @@ void broker_send_response_success(const char *publisher_id, const char *operatio
 
     if(payload)
     {
-        db__messages_easy_queue_with_purpose(NULL, response_topic, MOSQ_DAP_OP_PURPOSE, 0, strlen(payload), payload, false, 0, &props);
+        db__messages_easy_queue_with_purpose(NULL, response_topic, MOSQ_DAP_OP_PURPOSE, 0, (uint32_t)strlen(payload), payload, false, 0, &props);
     }
     else
     {
@@ -124,8 +124,7 @@ void broker_send_response_pending(const char *publisher_id, const char *operatio
 
     char deadline_buf[32];
     snprintf(deadline_buf, sizeof(deadline_buf), "%lld", (long long)deadline);
-    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY,
-        MOSQ_DAP_DEADLINE_KEY, deadline_buf);
+    mosquitto_property_add_string_pair(&props, MQTT_PROP_USER_PROPERTY, MOSQ_DAP_DEADLINE_KEY, deadline_buf);
 
     if(corr_data){
         mosquitto_property_add_binary(&props, MQTT_PROP_CORRELATION_DATA, corr_data, correlation_data_len);
@@ -339,7 +338,7 @@ struct subscriber_list *forward_request_to_connected(struct subscriber_list *sub
                 mosquitto_property_add_string(&props, MQTT_PROP_RESPONSE_TOPIC, response_topic);
             }
 
-            db__messages_easy_queue_with_purpose(NULL, mosquitto_strdup(ors_topic), MOSQ_DAP_OP_PURPOSE, msg_data->qos, msg_data->payloadlen, msg_data->payload, msg_data->retain, msg_data->expiry_time, &props);
+            db__messages_easy_queue_with_purpose(NULL, mosquitto_strdup(ors_topic), MOSQ_DAP_OP_PURPOSE, msg_data->qos, msg_data->payloadlen, msg_data->payload, msg_data->retain, (uint32_t)msg_data->expiry_time, &props);
         } else {
             struct subscriber_list *off = mosquitto_calloc(1, sizeof(*off));
             off->sub_id = mosquitto_strdup(sub_list->sub_id);

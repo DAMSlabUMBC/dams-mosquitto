@@ -993,6 +993,7 @@ int db__messages_easy_queue_with_purpose(struct mosquitto *context, const char *
 	}
 
 	base_msg->data.has_purpose_filter = true;
+	base_msg->data.purpose_filter_version = 0;
 	base_msg->data.purpose_filter = mosquitto_strdup(purpose);
 
 	base_msg->data.qos = qos;
@@ -1516,7 +1517,13 @@ static enum dap_hook_result db__dap_check_send(struct mosquitto *context, struct
 	if(has_stamp){
 		const char *pub_id = base_msg->data.source_id;
 		const char *purpose = base_msg->data.has_purpose_filter ? base_msg->data.purpose_filter : NULL;
-		uint32_t cur_mp = mp__lookup_version(pub_id, topic);
+		
+		uint32_t cur_mp = 0;
+		struct mp_entry *stored = mp__lookup(pub_id, topic);
+		if(stored)
+		{
+			cur_mp = stored->version;
+		}
 		uint32_t cur_sp = leaf->sp_version;
 		uint64_t op_id = 0;
 		enum dap_op_action action = dap_pending_ops_match(db.dap_pending_ops, pub_id, topic,

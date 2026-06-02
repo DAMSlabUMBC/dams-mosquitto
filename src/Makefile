@@ -139,6 +139,10 @@ OBJS_EXTERNAL= \
 		dap_op_request.o \
 		dap_timestamp.o \
 		dap_topics.o \
+		dap_send_verify.o \
+		dap_deadline_tracker.o \
+		dap_holding_list.o \
+		dap_op_requester.o \
 		dap_stamp.o \
 		send_connect.o \
 		send_disconnect.o \
@@ -233,6 +237,18 @@ dap_timestamp.o : ${R}/lib/dap_timestamp.c ${R}/lib/dap_timestamp.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
 dap_topics.o : ${R}/lib/dap_topics.c ${R}/lib/dap_topics.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+dap_send_verify.o : ${R}/lib/dap_send_verify.c ${R}/lib/dap_send_verify.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+dap_deadline_tracker.o : ${R}/lib/dap_deadline_tracker.c ${R}/lib/dap_deadline_tracker.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+dap_holding_list.o : ${R}/lib/dap_holding_list.c ${R}/lib/dap_holding_list.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+dap_op_requester.o : ${R}/lib/dap_op_requester.c ${R}/lib/dap_op_requester.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
 dap_stamp.o : ${R}/lib/dap_stamp.c ${R}/lib/dap_stamp.h

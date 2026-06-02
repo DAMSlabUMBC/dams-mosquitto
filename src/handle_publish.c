@@ -131,8 +131,6 @@ int handle__publish(struct mosquitto *context)
 	uint64_t op_id_num = 0;
 	bool found_op_id_num = false;
 
-	char* purpose_filter = NULL;
-
 	if(context->state != mosq_cs_active){
 		return MOSQ_ERR_PROTOCOL;
 	}
@@ -342,10 +340,11 @@ int handle__publish(struct mosquitto *context)
 		else
 		{
 			/* Normal data publish: the topic must have a registered MP. */
-			char *stored = mp__lookup_topic(context->id, base_msg->data.topic);
-			if(stored)
+			struct mp_entry *stored = mp__lookup(context->id, base_msg->data.topic);
+			if(stored && stored->purpose_filter)
 			{
-				base_msg->data.purpose_filter = mosquitto_strdup(stored);
+				base_msg->data.purpose_filter = mosquitto_strdup(stored->purpose_filter);
+				base_msg->data.purpose_filter_version = stored->version;
 				base_msg->data.has_purpose_filter = true;
 			}
 			else if(dap_is_op_system_topic(base_msg->data.topic))
@@ -353,6 +352,7 @@ int handle__publish(struct mosquitto *context)
 				/* Operation-system/control topic: no MP required. Leave
 					* delivery ungated as before (deny-all filter). */
 				base_msg->data.purpose_filter = mosquitto_strdup("");
+				base_msg->data.purpose_filter_version = 0;
 				base_msg->data.has_purpose_filter = true;
 			}
 			else
@@ -657,7 +657,7 @@ int handle__publish(struct mosquitto *context)
 			}
 
 			/* C2/C3 Operations */
-			else if (!strcmp(op_id, MOSQ_DAP_RIGHT_ACCESS) || !strcmp(op_id, MOSQ_DAP_OP_HISTORY)
+			else if (!strcmp(op_id, MOSQ_DAP_OP_HISTORY)
 			|| !strcmp(op_id, MOSQ_DAP_OP_DELETE) || !strcmp(op_id, MOSQ_DAP_OP_RESTRICT))
 			{
 				/* DELETE/RESTRICT become pending operations in the broker-wide map;
