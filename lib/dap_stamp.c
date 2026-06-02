@@ -34,14 +34,9 @@ int dap_stamp_and_enqueue(struct dap_subscription_queues *queues,
                                                       &op_id);
     if(action_out) *action_out = action;
 
-    /* A DELETE supersedes delivery: do not enqueue the message at all. The caller
-     * reads action_out to also skip recording the recipient. */
-    if(action == DAP_OP_ACTION_DROP){
-        return 0;
-    }
-
-    /* A RESTRICT stamps the message with the single deciding op id; NONE leaves the
-     * applied-op list empty. */
+    /* A RESTRICT stamps the message with the single deciding op id; NONE and DROP
+     * leave the applied-op list empty. The send-path gate re-checks pending ops and
+     * drops on DROP from there. */
     if(action == DAP_OP_ACTION_RESTRICT){
         return dap_subscription_queues_enqueue(queues, topic, msg, mid, mp_version, sp_version,
                                                &op_id, 1, enqueue_time);

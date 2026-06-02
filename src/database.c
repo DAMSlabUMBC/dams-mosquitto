@@ -33,6 +33,7 @@ Contributors:
 #include "dap_subscription_queues.h"
 #include "dap_send_verify.h"
 #include "mp_registry.h"
+#include "dr_registry.h"
 
 /**
  * Is this context ready to take more in flight messages right now?
@@ -1542,6 +1543,13 @@ static enum dap_hook_result db__dap_check_send(struct mosquitto *context, struct
 
 	switch(disp){
 		case DAP_DISP_DELIVER:
+			if(db.config->metadata_operation_handling){
+				bool is_op_system = base_msg->data.has_purpose_filter
+					&& !strcmp(base_msg->data.purpose_filter, MOSQ_DAP_OP_PURPOSE);
+				if(!is_op_system){
+					dr__record_recipient(base_msg->data.source_id, topic, client_id, base_msg->dap_recv_time);
+				}
+			}
 			if(has_stamp){
 				dap_stamped_msg_free(dap_subscription_queues_dequeue_front(leaf->dap_queues, topic));
 			}

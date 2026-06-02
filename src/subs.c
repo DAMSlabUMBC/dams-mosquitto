@@ -140,7 +140,6 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 	int rc = 0;
 	int rc2;
 	struct mosquitto__subleaf *leaf;
-	bool record = true;
 
 	rc = subs__shared_process(hier, topic, qos, retain, stored);
 
@@ -155,11 +154,6 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 		{
 			leaf = leaf->next;
 			continue;
-		}
-
-		if(!strcmp(stored->data.purpose_filter, MOSQ_DAP_OP_PURPOSE))
-		{
-			record = false;
 		}
 
 		bool allow_all_purposes = ((strcmp(stored->data.purpose_filter, "*") == 0));
@@ -213,12 +207,10 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 		rc2 = subs__send(leaf, topic, qos, retain, stored, &sent_mid);
 
 		/* Alongside the per-client queue subs__send filled above, stamp this matched
-		 * message into the subscription's own topic queue (created on first use). The
-		 * pending-op map decides the outcome: a DELETE drops the message (not queued
-		 * here), a RESTRICT stamps it with the deciding op id, NONE leaves it
-		 * unstamped. The send path still drives off the per-client queue. The stored
-		 * message is borrowed, not owned by the queue. */
-		enum dap_op_action dap_action = DAP_OP_ACTION_NONE;
+		 * message into the subscription's own topic queue (created on first use). Every
+		 * match is stamped; the send-path gate consults the pending-op map at delivery
+		 * time and produces a PASS, DROP, or BUMP verdict. The stored message is
+		 * borrowed, not owned by the queue. */
 		if(leaf->context && leaf->context->id){
 			if(!leaf->dap_queues){
 				leaf->dap_queues = mosquitto_calloc(1, sizeof(struct dap_subscription_queues));
@@ -230,16 +222,8 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 				const char *purpose = stored->data.has_purpose_filter ? stored->data.purpose_filter : NULL;
 				dap_stamp_and_enqueue(leaf->dap_queues, db.dap_pending_ops,
 						stored->data.source_id, leaf->context->id, topic,
-						sent_mid, leaf->sp_version, purpose, stored, stored->dap_recv_time, &dap_action);
+						sent_mid, leaf->sp_version, purpose, stored, stored->dap_recv_time, NULL);
 			}
-		}
-
-		/* A DELETE-matched message was not delivered, so don't record it as having
-		 * reached this recipient. */
-		if(db.config->metadata_operation_handling
-				&& record && dap_action != DAP_OP_ACTION_DROP)
-		{
-			dr__record_recipient(stored->data.source_id, topic, leaf->context->id, stored->dap_recv_time);
 		}
 
 		if(rc2){
