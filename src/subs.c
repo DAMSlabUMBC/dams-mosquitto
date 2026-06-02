@@ -106,7 +106,7 @@ static int subs__send(struct mosquitto__subleaf *leaf, const char *topic, uint8_
 		}else{
 			client_retain = false;
 		}
-		if(db__message_insert_outgoing(leaf->context, 0, mid, msg_qos, client_retain, stored, leaf->identifier, true, true) == 1){
+		if(db__message_insert_outgoing(leaf->context, 0, mid, msg_qos, client_retain, stored, leaf->identifier, false, true) == 1){
 			return 1;
 		}
 	}else{
@@ -125,6 +125,7 @@ static int subs__shared_process(struct mosquitto__subhier *hier, const char *top
 	HASH_ITER(hh, hier->shared, shared, shared_tmp){
 		leaf = shared->subs;
 		rc2 = subs__send(leaf, topic, qos, retain, stored, NULL);
+		(void)db__message_write_inflight_out_latest(leaf->context);
 		/* Remove current from the top, add back to the bottom */
 		DL_DELETE(shared->subs, leaf);
 		DL_APPEND(shared->subs, leaf);
@@ -225,6 +226,9 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 						sent_mid, leaf->sp_version, purpose, stored, stored->dap_recv_time, NULL);
 			}
 		}
+
+		/* Write here; the send-path gate consults the stamp queued above. */
+		(void)db__message_write_inflight_out_latest(leaf->context);
 
 		if(rc2){
 			rc = 1;
