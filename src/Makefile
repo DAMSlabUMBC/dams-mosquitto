@@ -137,6 +137,7 @@ OBJS_EXTERNAL= \
 		dap_subscription_queues.o \
 		dap_pending_ops.o \
 		dap_op_request.o \
+		dap_metrics.o \
 		dap_timestamp.o \
 		dap_topics.o \
 		dap_send_verify.o \
@@ -231,6 +232,9 @@ dap_pending_ops.o : ${R}/lib/dap_pending_ops.c ${R}/lib/dap_pending_ops.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
 dap_op_request.o : ${R}/lib/dap_op_request.c ${R}/lib/dap_op_request.h
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+dap_metrics.o : ${R}/lib/dap_metrics.c ${R}/lib/dap_metrics.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
 dap_timestamp.o : ${R}/lib/dap_timestamp.c ${R}/lib/dap_timestamp.h
