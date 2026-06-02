@@ -66,6 +66,7 @@ add_executable(mosquitto
 	../lib/dap_timestamp.c ../lib/dap_timestamp.h
 	../lib/dap_topics.c ../lib/dap_topics.h
 	../lib/dap_stamp.c ../lib/dap_stamp.h
+	../lib/dap_metrics.c ../lib/dap_metrics.h
 	../lib/dap_send_verify.c ../lib/dap_send_verify.h
 	../lib/dap_holding_list.c ../lib/dap_holding_list.h
 	read_handle.c

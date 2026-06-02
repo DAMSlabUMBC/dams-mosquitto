@@ -53,6 +53,7 @@ Contributors:
 
 #include "mosquitto_broker_internal.h"
 #include "util_mosq.h"
+#include "dap_metrics.h"
 
 struct mosquitto_db db;
 
@@ -320,6 +321,7 @@ static void post_shutdown_cleanup(void)
 	log__printf(NULL, MOSQ_LOG_INFO, "mosquitto version %s terminating", VERSION);
 
 	broker_control__cleanup();
+	dap_metrics_close();
 
 #ifdef WITH_PERSISTENCE
 	persist__backup(true);
@@ -551,6 +553,11 @@ int main(int argc, char *argv[])
 #endif
 
 	broker_control__init();
+
+	if(dap_metrics_init() != 0){
+		log__printf(NULL, MOSQ_LOG_WARNING,
+				"Could not open DAP broker metrics file; per-message metrics will not be written.");
+	}
 
 	log__printf(NULL, MOSQ_LOG_INFO, "mosquitto version %s running", VERSION);
 #ifdef WITH_SYSTEMD

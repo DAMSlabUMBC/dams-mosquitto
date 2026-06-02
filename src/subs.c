@@ -224,6 +224,9 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 				dap_stamp_and_enqueue(leaf->dap_queues, db.dap_pending_ops,
 						stored->data.source_id, leaf->context->id, topic,
 						sent_mid, leaf->sp_version, purpose, stored, stored->dap_recv_time, NULL);
+				if(stored->data.has_purpose_filter){
+					stored->dap_subs_matched++;
+				}
 			}
 		}
 

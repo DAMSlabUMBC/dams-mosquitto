@@ -34,6 +34,7 @@ Contributors:
 #include "dap_send_verify.h"
 #include "mp_registry.h"
 #include "dr_registry.h"
+#include "dap_metrics.h"
 
 /**
  * Is this context ready to take more in flight messages right now?
@@ -1558,6 +1559,15 @@ static enum dap_hook_result db__dap_check_send(struct mosquitto *context, struct
 				 * holding list itself - skip-in-place leaves them in flight). */
 				dap_holding_list_free_held(dap_holding_list_flush(hl, client_id));
 			}
+			if(base_msg->data.has_purpose_filter){
+				base_msg->dap_subs_resolved++;
+				if(base_msg->dap_fanout_complete
+						&& !base_msg->dap_metrics_emitted
+						&& base_msg->dap_subs_matched == base_msg->dap_subs_resolved){
+					dap_metrics_log_message(base_msg);
+					base_msg->dap_metrics_emitted = true;
+				}
+			}
 			return DAP_HOOK_SEND;
 
 		case DAP_DISP_DROP:
@@ -1570,6 +1580,15 @@ static enum dap_hook_result db__dap_check_send(struct mosquitto *context, struct
 			/* Drop without delivering, mirroring the message-expired branch below. */
 			if(client_msg->data.direction == mosq_md_out && client_msg->data.qos > 0){
 				util__increment_send_quota(context);
+			}
+			if(base_msg->data.has_purpose_filter){
+				base_msg->dap_subs_resolved++;
+				if(base_msg->dap_fanout_complete
+						&& !base_msg->dap_metrics_emitted
+						&& base_msg->dap_subs_matched == base_msg->dap_subs_resolved){
+					dap_metrics_log_message(base_msg);
+					base_msg->dap_metrics_emitted = true;
+				}
 			}
 			db__message_remove_inflight(context, &context->msgs_out, client_msg);
 			return DAP_HOOK_HANDLED;
@@ -1586,6 +1605,9 @@ static enum dap_hook_result db__dap_check_send(struct mosquitto *context, struct
 			db__msg_add_to_queued_stats(&context->msgs_out, client_msg);
 			plugin_persist__handle_client_msg_update(context, client_msg);
 			dap_holding_list_start_holding(hl, client_id, this_mid);
+			if(base_msg->data.has_purpose_filter){
+				base_msg->dap_bump_count++;
+			}
 			return DAP_HOOK_HANDLED;
 
 		case DAP_DISP_SKIP:

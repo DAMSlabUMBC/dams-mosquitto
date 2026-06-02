@@ -36,6 +36,7 @@ Contributors:
 #include "dap_op_requester.h"
 #include "dap_timestamp.h"
 #include "dap_topics.h"
+#include "dap_metrics.h"
 #include "property_common.h"
 #include "property_mosq.h"
 #include "read_handle.h"
@@ -145,6 +146,13 @@ int handle__publish(struct mosquitto *context)
 	/* Stamp the receipt time once, before any other DAP processing, so a single
 	 * reference timestamp drives both queue ordering and pending-operation matchingn*/
 	base_msg->dap_recv_time = time(NULL);
+	{
+		struct timespec ts_wall, ts_mono;
+		clock_gettime(CLOCK_REALTIME, &ts_wall);
+		clock_gettime(CLOCK_MONOTONIC, &ts_mono);
+		base_msg->dap_recv_time_ns_wall = (uint64_t)ts_wall.tv_sec * 1000000000ULL + (uint64_t)ts_wall.tv_nsec;
+		base_msg->dap_recv_time_ns_mono = (uint64_t)ts_mono.tv_sec * 1000000000ULL + (uint64_t)ts_mono.tv_nsec;
+	}
 
 	dup = (header & 0x08)>>3;
 	base_msg->data.qos = (header & 0x06)>>1;
@@ -796,6 +804,14 @@ int handle__publish(struct mosquitto *context)
 	 * the response builders copy what they need, so it is safe to release here. */
 	mosquitto_FREE(correlation_data);
 
+	/* Hold a metrics-window ref so the post-fanout check below can read stored
+	 * even if sub__messages_queue's internal dec would otherwise free it. */
+	struct mosquitto__base_msg *metrics_msg = stored;
+	bool metrics_track = (metrics_msg && metrics_msg->data.has_purpose_filter);
+	if(metrics_track){
+		db__msg_store_ref_inc(metrics_msg);
+	}
+
 	switch(stored->data.qos){
 		case 0:
 			rc2 = sub__messages_queue(context->id, stored->data.topic, stored->data.qos, stored->data.retain, &stored);
@@ -819,6 +835,12 @@ int handle__publish(struct mosquitto *context)
 			}else{
 				res = 0;
 			}
+			/* QoS 2 fan-out occurs later via PUBREL; the post-fanout emit below
+			 * does not apply to this branch. */
+			if(metrics_track){
+				db__msg_store_ref_dec(&metrics_msg);
+				metrics_track = false;
+			}
 
 			/* db__message_insert() returns 2 to indicate dropped message
 			 * due to queue. This isn't an error so don't disconnect them. */
@@ -834,6 +856,16 @@ int handle__publish(struct mosquitto *context)
 				rc = 1;
 			}
 			break;
+	}
+
+	if(metrics_track){
+		metrics_msg->dap_fanout_complete = true;
+		if(!metrics_msg->dap_metrics_emitted
+				&& metrics_msg->dap_subs_matched == metrics_msg->dap_subs_resolved){
+			dap_metrics_log_message(metrics_msg);
+			metrics_msg->dap_metrics_emitted = true;
+		}
+		db__msg_store_ref_dec(&metrics_msg);
 	}
 
 	db__message_write_queued_in(context);

@@ -440,6 +440,13 @@ struct mosquitto__base_msg{
 	bool stored;
 	time_t dap_recv_time; /* DAP receipt timestamp: single reference time for ordering
 	                       * and operation matching, stamped once at PUBLISH receipt */
+	uint64_t dap_recv_time_ns_wall; /* CLOCK_REALTIME at PUBLISH receipt, for the metrics row */
+	uint64_t dap_recv_time_ns_mono; /* CLOCK_MONOTONIC at PUBLISH receipt, for delta computation */
+	int dap_subs_matched;           /* leaves the message fanned out to */
+	int dap_subs_resolved;          /* leaves whose verdict (DELIVER/DROP) has landed */
+	int dap_bump_count;             /* bumps accrued before final resolution */
+	bool dap_fanout_complete;       /* set true once sub__messages_queue has returned */
+	bool dap_metrics_emitted;       /* set true after the metrics row has been written */
 };
 
 struct mosquitto__client_msg{
