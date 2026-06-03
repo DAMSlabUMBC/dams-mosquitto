@@ -631,6 +631,14 @@ int handle__publish(struct mosquitto *context)
 
 	/* Read all potential operational properties for later. A request carries
 		* DAP-OpType (found_op); a subscriber status notification carries DAP-Status. */
+	/* The immediate-forward path (HISTORY and other non-pending rights) scopes its
+	 * recipient lookup by op_info, but the parser fills the operation's topic-filter
+	 * list into op_topic_filters (from DAP-OpTFs) and left op_info unset, so that path
+	 * never matched. Alias op_info to the parsed topic filters. Borrowed pointer:
+	 * op_topic_filters remains the owner and is freed once in the cleanup below;
+	 * op_info is never freed, so there is no double free. */
+	op_info = op_topic_filters;
+
 	if(db.config->metadata_operation_handling && (found_op || op_status))
 	{
 		if(!strncmp(stored->data.topic, MOSQ_DAP_TOPIC_OSYS, 5))
