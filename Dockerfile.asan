@@ -1,0 +1,22 @@
+# ASan/UBSan build of the DAP broker for crash investigation (read-only, separate image/port).
+FROM ubuntu:20.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y \
+    cmake build-essential libssl-dev ca-certificates libcjson-dev \
+    libargon2-dev libsqlite3-dev pkg-config libcunit1-dev xsltproc docbook-xsl \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt/mqtt_brokers/mqtt-dap-mosquitto
+COPY . /opt/mqtt_brokers/mqtt-dap-mosquitto
+# Same cmake invocation as production Dockerfile, plus ASan+UBSan instrumentation.
+RUN cmake -DWITH_LTO=OFF -DWITH_CLIENTS=OFF -DWITH_BROKER=ON -DWITH_TESTS=OFF \
+      -DCMAKE_BUILD_TYPE=Debug \
+      -DCMAKE_C_FLAGS="-DDISABLE_ENGINE_CLEANUP -fsanitize=address,undefined -fno-omit-frame-pointer -g -O1" \
+      -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined" \
+      -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined" . \
+ && make -j"$(nproc)"
+RUN cp src/mosquitto /usr/local/sbin/mosquitto && cp lib/libmosquitto.so.1 /usr/local/lib/ && ldconfig
+RUN printf 'listener 1883\nallow_anonymous true\n' > /etc/mosquitto.conf
+ENV ASAN_OPTIONS=detect_leaks=0:abort_on_error=1:halt_on_error=1:print_stacktrace=1:log_path=stderr
+ENV UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
+EXPOSE 1883
+CMD ["/usr/local/sbin/mosquitto","-c","/etc/mosquitto.conf"]
