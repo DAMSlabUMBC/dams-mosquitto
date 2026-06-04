@@ -324,7 +324,25 @@ int handle__subscribe(struct mosquitto *context)
 
 				for(size_t i = 0; i < purpose_filter_count; i++)
 				{
-					sub.purpose_filters[i] = purpose_filters[i];
+					/* MQTT-DAP: each subscription leaf must OWN its purpose-filter
+					 * strings. The packet-scoped purpose_filters[] are freed once
+					 * after the topic-filter loop, so copy (don't borrow) here -
+					 * otherwise every topic filter in a multi-topic SUBSCRIBE shares
+					 * one allocation and session teardown double-frees it
+					 * (subs.c sub__free_purpose_filters). */
+					sub.purpose_filters[i] = mosquitto_strdup(purpose_filters[i]);
+					if(!sub.purpose_filters[i]){
+						for(size_t j = 0; j < i; j++){
+							mosquitto_FREE(sub.purpose_filters[j]);
+						}
+						mosquitto_FREE(sub.purpose_filters);
+						mosquitto_FREE(sub.topic_filter);
+						mosquitto_FREE(payload);
+						for(uint32_t k = 0; k < purpose_filter_count; k++){
+							mosquitto_FREE(purpose_filters[k]);
+						}
+						return MOSQ_ERR_NOMEM;
+					}
 				}
 			}
 			else
@@ -402,6 +420,12 @@ int handle__subscribe(struct mosquitto *context)
 				return MOSQ_ERR_NOMEM;
 			}
 		}
+	}
+
+	/* MQTT-DAP: each subscription leaf above took its own strdup'd copy of the
+	 * purpose filters, so free the packet-scoped originals exactly once here. */
+	for(uint32_t i = 0; i < purpose_filter_count; i++){
+		mosquitto_FREE(purpose_filters[i]);
 	}
 
 	if(context->protocol != mosq_p_mqtt31){
