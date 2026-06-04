@@ -1,0 +1,32 @@
+Metric Category,Metric Name,Value
+Broker,CPU Min (%),15.79545
+Broker,CPU Max (%),45.64220
+Broker,CPU Avg (%),25.28145
+Broker,CPU Variance,79.55456
+Broker,Memory Min (MB),94.87995
+Broker,Memory Max (MB),96.44710
+Broker,Memory Avg (MB),95.84602
+Broker,Memory Variance,0.13760
+Messaging,Latency Min (ms),-27.55475
+Messaging,Latency Max (ms),329.58364
+Messaging,Latency Avg (ms),6.31068
+Messaging,Latency Variance,153.24828
+Messaging,Throughput (msgs/sec),713.24834
+Messaging,Avg Header Size (bytes),33.09505
+Messaging,Data Messages,128365
+Messaging,Non-Data Messages,0
+Purpose Correctness,Total Subscribers,10
+Purpose Correctness,Total Valid Messages,128356
+Purpose Correctness,Total Invalid Messages,9
+Purpose Correctness,Total Expected,128366
+Purpose Correctness,Total Received,128365
+Purpose Correctness,Total Rejected,6
+Purpose Correctness,Avg False Accept Rate,0.0001
+Purpose Correctness,Avg False Reject Rate,0.0000
+OP Correlation,Total Tracked Operations,0
+OP Correlation,Total Completed Operations,0
+OP Correlation,Overall Completion Rate,0.0000
+O1 Informed,REGISTER-INFO Requests Issued,0
+O1 Informed,Publishers Informed,0
+O1 Informed,Publishers With Consumers,39
+O1 Informed,Informed Completion Rate,0.0000

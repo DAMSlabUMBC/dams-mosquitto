@@ -1,0 +1,65 @@
+Metric Category,Metric Name,Value
+Broker,CPU Min (%),15.27615
+Broker,CPU Max (%),44.92925
+Broker,CPU Avg (%),24.63902
+Broker,CPU Variance,68.05593
+Broker,Memory Min (MB),94.84197
+Broker,Memory Max (MB),96.26194
+Broker,Memory Avg (MB),95.76852
+Broker,Memory Variance,0.12578
+Messaging,Latency Min (ms),-6.12760
+Messaging,Latency Max (ms),409.76739
+Messaging,Latency Avg (ms),6.20337
+Messaging,Latency Variance,213.21481
+Messaging,Throughput (msgs/sec),713.83850
+Messaging,Avg Header Size (bytes),33.10408
+Messaging,Data Messages,128505
+Messaging,Non-Data Messages,95
+Purpose Correctness,Total Subscribers,10
+Purpose Correctness,Total Valid Messages,128460
+Purpose Correctness,Total Invalid Messages,0
+Purpose Correctness,Total Expected,128844
+Purpose Correctness,Total Received,128460
+Purpose Correctness,Total Rejected,384
+Purpose Correctness,Avg False Accept Rate,0.0000
+Purpose Correctness,Avg False Reject Rate,0.0035
+OP Correctness,Total Operational Requests,85
+OP Correctness,Total Expected Responses,504
+OP Correctness,Total Actual Responses,504
+OP Correctness,Total Relevant Requests Recieved,630
+OP Correctness,Total Irrelevant Requests Recieved,0
+OP Correctness,Avg Coverage,1.0000
+OP Correctness,Avg Leakage,0.0000
+OP Correctness,Avg Completion,1.0000
+OP Correlation,Total Tracked Operations,85
+OP Correlation,Total Completed Operations,85
+OP Correlation,Overall Completion Rate,1.0000
+OP Correlation,AUDIT Operations Issued,17
+OP Correlation,AUDIT Completion Rate,1.0000
+OP Correlation,AUDIT Median Latency (ms),22.33267
+OP Correlation,AUDIT p90 Latency (ms),132.42612
+OP Correlation,AUDIT p99 Latency (ms),138.26724
+OP Correlation,DELETE Operations Issued,17
+OP Correlation,DELETE Completion Rate,1.0000
+OP Correlation,DELETE Median Latency (ms),39.58631
+OP Correlation,DELETE p90 Latency (ms),144.80109
+OP Correlation,DELETE p99 Latency (ms),177.72283
+OP Correlation,HISTORY Operations Issued,17
+OP Correlation,HISTORY Completion Rate,1.0000
+OP Correlation,HISTORY Median Latency (ms),7.17783
+OP Correlation,HISTORY p90 Latency (ms),55.44515
+OP Correlation,HISTORY p99 Latency (ms),64.74888
+OP Correlation,RESTRICT Operations Issued,17
+OP Correlation,RESTRICT Completion Rate,1.0000
+OP Correlation,RESTRICT Median Latency (ms),48.15722
+OP Correlation,RESTRICT p90 Latency (ms),202.57297
+OP Correlation,RESTRICT p99 Latency (ms),210.88232
+OP Correlation,UPDATE Operations Issued,17
+OP Correlation,UPDATE Completion Rate,1.0000
+OP Correlation,UPDATE Median Latency (ms),17.66801
+OP Correlation,UPDATE p90 Latency (ms),83.24876
+OP Correlation,UPDATE p99 Latency (ms),96.92951
+O1 Informed,REGISTER-INFO Requests Issued,10
+O1 Informed,Publishers Informed,40
+O1 Informed,Publishers With Consumers,40
+O1 Informed,Informed Completion Rate,1.0000

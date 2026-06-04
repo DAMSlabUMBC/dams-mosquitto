@@ -1,0 +1,4 @@
+VERDICT=PASS
+cells=20 reps=5 total=100
+failures=0
+
