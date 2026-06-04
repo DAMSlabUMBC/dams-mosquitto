@@ -152,6 +152,26 @@ ${R}/src/topic_tok.o : ${R}/src/topic_tok.c
 ${R}/src/util_mosq.o : ${R}/lib/util_mosq.c
 	$(MAKE) -C ${R}/src/ util_mosq.o
 
+${R}/src/dap_topics.o : ${R}/lib/dap_topics.c
+	$(MAKE) -C ${R}/src/ dap_topics.o
+
+# Standalone (no CUnit) test for the output-side priority queue, MQTT-DAP paper
+# 5.2(ii). The header-defined helper (src/output_priority.h) compiles into the test
+# directly, so this links only dap_topics.o - it does not pull in database.o and is
+# therefore independent of the database.o-linking tests above. Kept out of ALL_TESTS
+# so it builds and runs on its own.
+QUEUED_PRIORITY_TEST_OBJS = queued_priority_test.o
+QUEUED_PRIORITY_OBJS = ${R}/src/dap_topics.o
+
+queued_priority_test : ${QUEUED_PRIORITY_TEST_OBJS} ${QUEUED_PRIORITY_OBJS}
+	$(CROSS_COMPILE)$(CC) $(LOCAL_LDFLAGS) -o $@ $^
+
+${QUEUED_PRIORITY_TEST_OBJS} : %.o: %.c
+	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
+
+queued-priority : queued_priority_test
+	${SANITIZER_COMMAND} ./queued_priority_test
+
 ALL_TESTS:=bridge_topic_test keepalive_test persist_read_test persist_write_test subs_test
 
 build : ${ALL_TESTS}
@@ -162,7 +182,7 @@ test : build
 test-compile: build
 
 clean :
-	-rm -rf mosq_test bridge_topic_test keepalive_test persist_read_test persist_write_test subs_test
+	-rm -rf mosq_test bridge_topic_test keepalive_test persist_read_test persist_write_test subs_test queued_priority_test
 	-rm -rf *.o *.gcda *.gcno coverage.info *.vglog out/
 
 coverage :
