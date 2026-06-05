@@ -169,20 +169,13 @@ static int subs__process(struct mosquitto__subhier *hier, const char *source_id,
 				continue;
 			}
 
-			/* Match the message filter with the subscription; a "*" entry
-				* in the subscription's filter list matches any publisher purpose. */
-			bool filter_found = false;
-			for(uint8_t i = 0; i < leaf->purpose_filter_count; i++)
-			{
-				if(strcmp(leaf->purpose_filters[i], "*") == 0
-					|| strcmp(leaf->purpose_filters[i], stored->data.purpose_filter) == 0)
-				{
-					filter_found = true;
-					break;
-				}
-			}
-
-			if(!filter_found)
+			/* Match the message's MP against the subscription's SP set under
+				* match-any semantics: the MP (and each SP entry) may carry several
+				* alternative filters joined by '|', and the message is deliverable
+				* when any MP filter equals any SP filter. A "*" SP entry matches any
+				* publisher purpose. */
+			if(!purpose_filter_mp_matches_sp(stored->data.purpose_filter,
+					leaf->purpose_filters, leaf->purpose_filter_count))
 			{
 				leaf = leaf->next;
 				continue;

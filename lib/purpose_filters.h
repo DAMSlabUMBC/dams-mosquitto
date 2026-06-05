@@ -24,4 +24,11 @@ char **parse_purpose_filter(const char *filter, uint32_t *num_results);
  * strlen+1) and overflowed when copying the terminator. */
 char *purpose_filter_store_dup(const char *purpose);
 
+/* §4 purpose compatibility under match-any semantics. Both the message-purpose mp
+ * and each subscription purpose-filter in sp_filters may carry several alternative
+ * filters joined by '|'. Returns true when some '|'-separated filter of mp equals
+ * some '|'-separated filter of any sp_filters entry, or when an sp_filters entry is
+ * "*" (allow-all). Returns false for a NULL/empty mp or an empty SP set. */
+bool purpose_filter_mp_matches_sp(const char *mp, char *const *sp_filters, uint32_t sp_count);
+
 #endif

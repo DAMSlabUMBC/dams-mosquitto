@@ -143,3 +143,47 @@ char *purpose_filter_store_dup(const char *purpose)
     strcpy(filter, purpose);
     return filter;
 }
+
+/* True if any '|'-separated filter of mp equals any '|'-separated filter of sp. */
+static bool pf__filters_intersect(const char *mp, const char *sp)
+{
+    char *mp_copy = strdup(mp);
+    if(!mp_copy) return false;
+
+    bool found = false;
+    char *mp_save = NULL;
+    for(char *m = strtok_r(mp_copy, "|", &mp_save); m && !found; m = strtok_r(NULL, "|", &mp_save))
+    {
+        char *sp_copy = strdup(sp);
+        if(!sp_copy) break;
+        char *sp_save = NULL;
+        for(char *s = strtok_r(sp_copy, "|", &sp_save); s; s = strtok_r(NULL, "|", &sp_save))
+        {
+            if(strcmp(m, s) == 0)
+            {
+                found = true;
+                break;
+            }
+        }
+        free(sp_copy);
+    }
+    free(mp_copy);
+    return found;
+}
+
+bool purpose_filter_mp_matches_sp(const char *mp, char *const *sp_filters, uint32_t sp_count)
+{
+    if(!mp || mp[0] == '\0' || !sp_filters || sp_count == 0)
+    {
+        return false;
+    }
+
+    for(uint32_t i = 0; i < sp_count; i++)
+    {
+        const char *sp = sp_filters[i];
+        if(!sp) continue;
+        if(strcmp(sp, "*") == 0) return true;       /* allow-all SP entry */
+        if(pf__filters_intersect(mp, sp)) return true;
+    }
+    return false;
+}
