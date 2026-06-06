@@ -115,7 +115,16 @@ int handle__subscribe(struct mosquitto *context)
 				/* Check if this is a purpose filtering property and assign if so */
 				if(!strcmp(name, MOSQ_DAP_SP_KEY))
 				{
-					/* Parse all purposes this filter describes */
+					/* The DAP-SP property is present, so the subscriber HAS declared
+					 * an SP - even an empty one. An empty SP is a valid consent
+					 * withdrawal (the subscription then matches nothing, see subs.c
+					 * purpose_filter_count <= 0), NOT a missing declaration. Mark
+					 * has_sp here so the no-SP rejection below does not fire and
+					 * disconnect a subscriber on a withdrawn-purpose rotation window. */
+					has_sp = true;
+
+					/* Parse all purposes this filter describes. An empty/absent value
+					 * parses to zero filters (handled in parse_purpose_filter). */
 					uint32_t num_results = 0;
 					char** purposes = parse_purpose_filter(value, &num_results);
 

@@ -94,6 +94,17 @@ mosquitto_pf_expansion *combine_expansions(mosquitto_pf_expansion *old_list, uin
 
 char **parse_purpose_filter(const char *filter, uint32_t *num_results)
 {
+    /* An empty or absent filter (e.g. a withdrawn DAP-SP, which arrives as a
+     * zero-length user-property value that the property reader surfaces as NULL)
+     * yields zero purpose filters - "matches nothing" consent-withdrawal
+     * semantics (see subs.c, purpose_filter_count <= 0) - rather than
+     * dereferencing NULL in the strdup() below. */
+    if(filter == NULL || filter[0] == '\0')
+    {
+        *num_results = 0;
+        return NULL;
+    }
+
     mosquitto_pf_expansion *exp_list = mosquitto_malloc(sizeof(mosquitto_pf_expansion));
     exp_list[0].str = strdup("");
     exp_list[0].ended = false;
