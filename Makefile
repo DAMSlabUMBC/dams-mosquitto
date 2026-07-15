@@ -8,10 +8,15 @@ DISTFILES= \
 	client/ \
 	cmake/ \
 	common/ \
+	dashboard/ \
 	deps/ \
+	doc/ \
+	docker/ \
 	examples/ \
+	fuzzing/ \
 	include/ \
 	installer/ \
+	libcommon/ \
 	lib/ \
 	logo/ \
 	make/ \
@@ -23,10 +28,19 @@ DISTFILES= \
 	snap/ \
 	src/ \
 	test/ \
+	www/ \
+	.github \
 	\
+	.editorconfig \
+	.gitignore \
+	.uncrustify.cfg \
+	buildtest.py \
+	codecov.yml \
 	CMakeLists.txt \
+	CITATION.cff \
 	CONTRIBUTING.md \
 	ChangeLog.txt \
+	format.sh \
 	LICENSE.txt \
 	Makefile \
 	about.html \
@@ -43,8 +57,14 @@ DISTFILES= \
 	pwfile.example \
 	README-compiling.md \
 	README-letsencrypt.md \
+	README-tests.md \
 	README-windows.txt \
-	README.md
+	README.md \
+	run_tests.py \
+	set-version.sh \
+	SECURITY.md \
+	THANKS.txt \
+	vcpkg.json
 
 .PHONY : all mosquitto api docs binary check clean reallyclean test test-compile install uninstall dist sign copy localdocker
 
@@ -149,7 +169,7 @@ copy : sign
 
 coverage :
 	lcov --capture -d apps -d client -d lib -d plugins -d src --output-file coverage.info --no-external --ignore-errors empty
-	genhtml coverage.info --output-directory out
+	genhtml --ignore-errors inconsistent coverage.info --output-directory out
 
 localdocker : reallyclean
 	set -e; for d in ${DISTDIRS}; do $(MAKE) -C $${d} dist; done
@@ -159,4 +179,4 @@ localdocker : reallyclean
 	cd dockertmp/; tar -zcf mosq.tar.gz mosquitto-${VERSION}/
 	cp dockertmp/mosq.tar.gz docker/local
 	rm -rf dockertmp/
-	cd docker/local && docker build . -t eclipse-mosquitto:local
+	cd docker/local && docker build . -t eclipse-mosquitto:local --build-arg VERSION=${VERSION}

@@ -57,9 +57,12 @@ int handle__subscribe(struct mosquitto *context)
 	 * packet-scoped in MQTT v5, so this is a packet-level fact applied per subscription. */
 	bool has_sp = false;
 
-	if(!context) return MOSQ_ERR_INVAL;
+	if(!context){
+		return MOSQ_ERR_INVAL;
+	}
 
 	if(context->state != mosq_cs_active){
+		log__printf(NULL, MOSQ_LOG_INFO, "Protocol error from %s: SUBSCRIBE before session is active.", context->id);
 		return MOSQ_ERR_PROTOCOL;
 	}
 	if(context->in_packet.command != (CMD_SUBSCRIBE|2)){
@@ -73,8 +76,12 @@ int handle__subscribe(struct mosquitto *context)
 			return MOSQ_ERR_MALFORMED_PACKET;
 		}
 	}
-	if(packet__read_uint16(&context->in_packet, &mid)) return MOSQ_ERR_MALFORMED_PACKET;
-	if(mid == 0) return MOSQ_ERR_MALFORMED_PACKET;
+	if(packet__read_uint16(&context->in_packet, &mid)){
+		return MOSQ_ERR_MALFORMED_PACKET;
+	}
+	if(mid == 0){
+		return MOSQ_ERR_MALFORMED_PACKET;
+	}
 
 	if(context->protocol == mosq_p_mqtt5){
 		rc = property__read_all(CMD_SUBSCRIBE, &context->in_packet, &properties);
@@ -83,6 +90,7 @@ int handle__subscribe(struct mosquitto *context)
 			 * MOSQ_ERR_MALFORMED_PACKET, but this is would change the library
 			 * return codes so needs doc changes as well. */
 			if(rc == MOSQ_ERR_PROTOCOL){
+				log__printf(NULL, MOSQ_LOG_INFO, "Protocol error from %s: SUBSCRIBE packet with invalid properties.", context->id);
 				return MOSQ_ERR_MALFORMED_PACKET;
 			}else{
 				return rc;
@@ -90,7 +98,7 @@ int handle__subscribe(struct mosquitto *context)
 		}
 
 		if(mosquitto_property_read_varint(properties, MQTT_PROP_SUBSCRIPTION_IDENTIFIER,
-					&subscription_identifier, false)){
+				&subscription_identifier, false)){
 
 			/* If the identifier was force set to 0, this is an error */
 			if(subscription_identifier == 0){
@@ -231,6 +239,7 @@ int handle__subscribe(struct mosquitto *context)
 			if(sub.options & MQTT_SUB_OPT_NO_LOCAL && !strncmp(sub.topic_filter, "$share/", strlen("$share/"))){
 				mosquitto_FREE(sub.topic_filter);
 				mosquitto_FREE(payload);
+				log__printf(NULL, MOSQ_LOG_INFO, "Protocol error from %s: $share subscription with no-local set.", context->id);
 				return MOSQ_ERR_PROTOCOL;
 			}
 
@@ -249,7 +258,7 @@ int handle__subscribe(struct mosquitto *context)
 					mosquitto_FREE(payload);
 					return MOSQ_ERR_PROTOCOL;
 				}
-				retain_handling = MQTT_SUB_OPT_GET_SEND_RETAIN(sub.options);
+				retain_handling = MQTT_SUB_OPT_GET_RETAIN_HANDLING(sub.options);
 				if(retain_handling == 0x30 || (sub.options & 0xC0) != 0){
 					mosquitto_FREE(sub.topic_filter);
 					mosquitto_FREE(payload);
@@ -361,7 +370,7 @@ int handle__subscribe(struct mosquitto *context)
 			}
 
 			allowed = true;
-			rc2 = mosquitto_acl_check(context, sub.topic_filter, 0, NULL, qos, false, MOSQ_ACL_SUBSCRIBE);
+			rc2 = mosquitto_acl_check(context, sub.topic_filter, 0, NULL, qos, false, properties, MOSQ_ACL_SUBSCRIBE);
 			switch(rc2){
 				case MOSQ_ERR_SUCCESS:
 					break;
@@ -375,6 +384,7 @@ int handle__subscribe(struct mosquitto *context)
 					break;
 				default:
 					mosquitto_FREE(sub.topic_filter);
+					mosquitto_FREE(payload);
 					return rc2;
 			}
 			if(qos > 127){
@@ -387,18 +397,21 @@ int handle__subscribe(struct mosquitto *context)
 				rc2 = plugin__handle_subscribe(context, &sub);
 				if(rc2){
 					mosquitto_FREE(sub.topic_filter);
+					mosquitto_FREE(payload);
 					return rc2;
 				}
 
 				rc2 = sub__add(context, &sub);
 				if(rc2 > 0){
 					mosquitto_FREE(sub.topic_filter);
+					mosquitto_FREE(payload);
 					return rc2;
 				}
 				if(context->protocol == mosq_p_mqtt311 || context->protocol == mosq_p_mqtt31){
 					if(rc2 == MOSQ_ERR_SUCCESS || rc2 == MOSQ_ERR_SUB_EXISTS){
 						if(retain__queue(context, &sub)){
 							mosquitto_FREE(sub.topic_filter);
+							mosquitto_FREE(payload);
 							return rc;
 						}
 					}
@@ -408,6 +421,7 @@ int handle__subscribe(struct mosquitto *context)
 
 						if(retain__queue(context, &sub)){
 							mosquitto_FREE(sub.topic_filter);
+							mosquitto_FREE(payload);
 							return rc;
 						}
 					}
@@ -443,7 +457,9 @@ int handle__subscribe(struct mosquitto *context)
 			return MOSQ_ERR_MALFORMED_PACKET;
 		}
 	}
-	if(send__suback(context, mid, payloadlen, payload)) rc = 1;
+	if(send__suback(context, mid, payloadlen, payload)){
+		rc = 1;
+	}
 	mosquitto_FREE(payload);
 
 #ifdef WITH_PERSISTENCE
@@ -452,9 +468,13 @@ int handle__subscribe(struct mosquitto *context)
 
 	if(context->out_packet == NULL){
 		rc = db__message_write_queued_out(context);
-		if(rc) return rc;
+		if(rc){
+			return rc;
+		}
 		rc = db__message_write_inflight_out_latest(context);
-		if(rc) return rc;
+		if(rc){
+			return rc;
+		}
 	}
 
 	return rc;

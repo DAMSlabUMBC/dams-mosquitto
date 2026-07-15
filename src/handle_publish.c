@@ -19,7 +19,6 @@ Contributors:
 #include "config.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "mosquitto_broker_internal.h"
@@ -43,6 +42,382 @@ Contributors:
 #include "send_mosq.h"
 #include "sys_tree.h"
 #include "util_mosq.h"
+
+
+static int process_bad_message(struct mosquitto *context, struct mosquitto__base_msg *base_msg, uint8_t reason_code)
+{
+	int rc = MOSQ_ERR_UNKNOWN;
+	if(base_msg){
+		switch(base_msg->data.qos){
+			case 0:
+				rc = MOSQ_ERR_SUCCESS;
+				break;
+			case 1:
+				if(context){
+					rc = send__puback(context, base_msg->data.source_mid, reason_code, NULL);
+				}else{
+					rc = MOSQ_ERR_SUCCESS;
+				}
+				break;
+			case 2:
+				if(context){
+					rc = send__pubrec(context, base_msg->data.source_mid, reason_code, NULL);
+				}else{
+					rc = MOSQ_ERR_SUCCESS;
+				}
+				break;
+		}
+		db__msg_store_free(base_msg);
+	}
+	if(context && db.config->max_queued_messages > 0 && context->out_packet_count >= db.config->max_queued_messages){
+		rc = MQTT_RC_QUOTA_EXCEEDED;
+	}
+	return rc;
+}
+
+
+int handle__accepted_publish(struct mosquitto *context, struct mosquitto__base_msg *base_msg, uint16_t mid, int dup, uint32_t *message_expiry_interval)
+{
+	int rc;
+	int rc2;
+	struct mosquitto__base_msg *stored = NULL;
+	struct mosquitto__client_msg *cmsg_stored = NULL;
+
+	{
+		rc = plugin__handle_message_in(context, &base_msg->data);
+		if(rc == MOSQ_ERR_ACL_DENIED){
+			log__printf(NULL, MOSQ_LOG_DEBUG,
+					"Denied PUBLISH from %s (d%d, q%d, r%d, m%d, '%s', ... (%ld bytes))",
+					context->id, dup, base_msg->data.qos, base_msg->data.retain, base_msg->data.source_mid, base_msg->data.topic,
+					(long)base_msg->data.payloadlen);
+
+			return process_bad_message(context, base_msg, MQTT_RC_NOT_AUTHORIZED);
+		}else if(rc == MOSQ_ERR_QUOTA_EXCEEDED){
+			log__printf(NULL, MOSQ_LOG_DEBUG,
+					"Rejected PUBLISH from %s, quota exceeded.", context->id);
+
+			return process_bad_message(context, base_msg, MQTT_RC_QUOTA_EXCEEDED);
+		}else if(rc != MOSQ_ERR_SUCCESS){
+			db__msg_store_free(base_msg);
+			return rc;
+		}
+	}
+
+	if(base_msg->data.qos > 0){
+		db__message_store_find(context, base_msg->data.source_mid, &cmsg_stored);
+	}
+
+	if(cmsg_stored && base_msg->data.source_mid != 0 &&
+			(cmsg_stored->base_msg->data.qos != base_msg->data.qos
+			|| cmsg_stored->base_msg->data.payloadlen != base_msg->data.payloadlen
+			|| strcmp(cmsg_stored->base_msg->data.topic, base_msg->data.topic)
+			|| memcmp(cmsg_stored->base_msg->data.payload, base_msg->data.payload, base_msg->data.payloadlen))){
+
+		log__printf(NULL, MOSQ_LOG_WARNING, "Reused message ID %u from %s detected. Clearing from storage.", base_msg->data.source_mid, context->id);
+		db__message_remove_incoming(context, base_msg->data.source_mid);
+		cmsg_stored = NULL;
+	}
+
+	if(!cmsg_stored){
+		if(base_msg->data.qos > 0 && context->msgs_in.inflight_quota == 0){
+			log__printf(NULL, MOSQ_LOG_WARNING, "Client %s has exceeded its receive-maximum quota. This behaviour must be fixed on the client.", context->id);
+#if 0
+			/* Badly behaving clients like on the esp32 fall foul of this
+			 * check, so report it for now but don't disconnect, to give chance
+			 * for the bad behaviour to be fixed. */
+			/* Client isn't allowed any more incoming messages, so fail early */
+			db__msg_store_free(base_msg);
+			return MOSQ_ERR_RECEIVE_MAXIMUM_EXCEEDED;
+#endif
+		}
+
+		if(base_msg->data.qos == 0
+				|| db__ready_for_flight(context, mosq_md_in, base_msg->data.qos)
+				){
+
+			dup = 0;
+			rc = db__message_store(context, base_msg, message_expiry_interval, mosq_mo_client);
+			if(rc){
+				return rc;
+			}
+		}else{
+			/* Client isn't allowed any more incoming messages, so fail early */
+			return process_bad_message(context, base_msg, MQTT_RC_QUOTA_EXCEEDED);
+		}
+		stored = base_msg;
+		base_msg = NULL;
+		dup = 0;
+	}else{
+		db__msg_store_free(base_msg);
+		base_msg = NULL;
+		stored = cmsg_stored->base_msg;
+		cmsg_stored->data.dup++;
+		dup = cmsg_stored->data.dup;
+	}
+
+	if(stored->data.retain)
+	{
+		dr__record_retained_publisher(context->id, stored->data.topic);
+	}
+
+	/* Read all potential operational properties for later. A request carries
+	* DAP-OpType (found_op); a subscriber status notification carries DAP-Status. */
+	/* The immediate-forward path (HISTORY and other non-pending rights) scopes its
+	 * recipient lookup by op_info, but the parser fills the operation's topic-filter
+	 * list into op_topic_filters (from DAP-OpTFs) and left op_info unset, so that path
+	 * never matched. Alias op_info to the parsed topic filters. Borrowed pointer:
+	 * op_topic_filters remains the owner and is freed once in the cleanup below;
+	 * op_info is never freed, so there is no double free. */
+	op_info = op_topic_filters;
+
+	if(db.config->metadata_operation_handling && (found_op || op_status))
+	{
+		if(!strncmp(stored->data.topic, MOSQ_DAP_TOPIC_OSYS, 5))
+		{
+			if(op_status)
+			{
+				/* Inbound status notification: relay it to the requester and, on a
+					* terminal status, advance the deadline tracker. */
+				handle_dap_status_notification(context, found_op ? op_id : NULL,
+						op_id_num, found_op_id_num, op_status, op_reason,
+						op_client_id, stored, correlation_data, correlation_data_len);
+			}
+			/* C1 Operations */
+			else if(!strcmp(op_id, MOSQ_DAP_OP_AUDIT))
+			{
+				subscription_list *subs = find_subscriptions_for_publisher(context->id);
+				while(subs){
+					const char *info = ri__lookup_info(subs->subscriber_id);
+					if(info){
+						broker_send_response_success(context->id, op_id, correlation_data, correlation_data_len, info, response_topic);
+						ri__mark_sent_to_pub(context->id, subs->subscriber_id);
+					}
+					subs = subs->next;
+				}
+			}
+
+			/* REGISTER-INFO: store the requester's info for later auto-fulfilment.
+				* "Informed-Reg" is the original name and is still accepted. */
+			else if(!strcmp(op_id, MOSQ_DAP_OP_REGISTER_INFO))
+			{
+				ri__register_info(context->id, stored->data.payload);
+			}
+
+			/* C2/C3 Operations */
+			else if (!strcmp(op_id, MOSQ_DAP_OP_HISTORY)
+			|| !strcmp(op_id, MOSQ_DAP_OP_DELETE) || !strcmp(op_id, MOSQ_DAP_OP_RESTRICT))
+			{
+				/* DELETE/RESTRICT become pending operations in the broker-wide map;
+					* dap_op_request_insert succeeds for exactly those two and assigns the
+					* numeric op id. Every other right (Access/Portability/Rectification/
+					* Object/AutoDecision) falls through to the unchanged immediate path. */
+				uint64_t pending_op_id = 0;
+				bool is_pending_op = (dap_op_request_insert(db.dap_pending_ops, context->id, op_id,
+							op_topic_filters, op_purpose_filters, op_client_filters,
+							stored->dap_recv_time, &pending_op_id) == 0);
+
+				if(is_pending_op)
+				{
+					/* Deadline workflow. Relevant subscribers are those that received
+						* data from this publisher matching the operation's topic/purpose/
+						* client filters within the DAP-OpBefore/OpAfter receipt-time
+						* bounds (0 = unbounded on that side). */
+					log__printf(NULL, MOSQ_LOG_DEBUG,
+							"DAP pending operation %llu (%s) registered for %s; bounds after=%lld before=%lld",
+							(unsigned long long)pending_op_id, op_id, context->id,
+							(long long)op_after, (long long)op_before);
+
+					struct dr_sublist *relevant = dr__find_relevant_subscribers(context->id,
+							op_topic_filters, op_purpose_filters, op_client_filters,
+							op_before, op_after);
+
+					/* Assign a deadline relative to the receipt timestamp, forward to the
+						* relevant subs on their ORS, register the op with the deadline
+						* tracker, and echo a Pending ack (op id + deadline) to the requester.
+						* The final Success/Failure is settled by the deadline sweep (loop.c)
+						* and the status path, not synchronously here. */
+					time_t deadline = stored->dap_recv_time + MOSQ_DAP_DEFAULT_DEADLINE_SECS;
+					broker_dispatch_pending_operation(context->id, op_id, pending_op_id,
+							relevant, &stored->data, response_topic, op_info,
+							correlation_data, correlation_data_len, deadline);
+					dr__free_sublist(relevant);
+
+					/* DELETE additionally drops the publisher's stored will/retained data. */
+					if(!strcmp(op_id, MOSQ_DAP_OP_DELETE))
+					{
+						handle_remove_stored_messages(context->id);
+					}
+				}
+				else
+				{
+					/* Non-pending rights: immediate forward + Success/Failure. */
+					subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
+					subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, response_topic, op_id, op_info, correlation_data, correlation_data_len, 0);
+					if(offline){
+						broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Subscriber not connected", offline, response_topic);
+					}
+					else
+					{
+						broker_send_response_success(context->id, op_id, correlation_data, correlation_data_len, NULL, response_topic);
+					}
+				}
+			}
+
+			/* AUDIT: report which subscribers received the requester's matching
+				* data. The broker fulfils this directly without consulting anyone;
+				* the success payload is the comma-separated subscriber ids. No
+				* relevant subscribers is a failure. */
+			else if(!strcmp(op_id, MOSQ_DAP_OP_AUDIT))
+			{
+				struct dr_sublist *relevant = dr__find_relevant_subscribers(context->id,
+						op_topic_filters, op_purpose_filters, op_client_filters,
+						op_before, op_after);
+				if(!relevant)
+				{
+					broker_send_response_failure(context->id, op_id, correlation_data,
+							correlation_data_len, "No relevant subscribers", NULL, response_topic);
+				}
+				else
+				{
+					size_t len = 0;
+					for(struct dr_sublist *s = relevant; s; s = s->next){
+						len += strlen(s->sub_id) + 1; /* id plus a separator/terminator */
+					}
+					char *payload = mosquitto_calloc(1, len + 1);
+					if(payload)
+					{
+						for(struct dr_sublist *s = relevant; s; s = s->next){
+							strcat(payload, s->sub_id);
+							if(s->next) strcat(payload, ",");
+						}
+						broker_send_response_success(context->id, op_id, correlation_data,
+								correlation_data_len, payload, response_topic);
+						mosquitto_FREE(payload);
+					}
+					dr__free_sublist(relevant);
+				}
+			}
+
+			/* HISTORY and UPDATE are subscriber-involving like DELETE/RESTRICT but
+				* do not apply to in-flight messages, so they get no pending-ops entry.
+				* Allocate an op id, forward to the relevant subscribers and track the
+				* deadline. UPDATE's replacement payload rides along in the forwarded
+				* request (stored->data.payload). */
+			else if(!strcmp(op_id, MOSQ_DAP_OP_HISTORY) || !strcmp(op_id, MOSQ_DAP_OP_UPDATE))
+			{
+				uint64_t hu_op_id = dap_pending_ops_allocate_op_id(db.dap_pending_ops);
+				struct dr_sublist *relevant = dr__find_relevant_subscribers(context->id,
+						op_topic_filters, op_purpose_filters, op_client_filters,
+						op_before, op_after);
+				time_t deadline = stored->dap_recv_time + MOSQ_DAP_DEFAULT_DEADLINE_SECS;
+				broker_dispatch_pending_operation(context->id, op_id, hu_op_id,
+						relevant, &stored->data, response_topic, op_info,
+						correlation_data, correlation_data_len, deadline);
+				dr__free_sublist(relevant);
+			}
+
+			/* Generic operator-defined operation ("O:" prefix), also not implemented. */
+			else if(!strncmp(op_id, MOSQ_DAP_OP_PREFIX, strlen(MOSQ_DAP_OP_PREFIX)))
+			{
+				log__printf(NULL, MOSQ_LOG_INFO,
+						"DAP generic operation %s from %s not yet implemented", op_id, context->id);
+			}
+
+			else
+			{
+				/* Unrecognized right. */
+				broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Unknown right", NULL, response_topic);
+			}
+		}
+	}
+
+	/* DAP-OpTFs/OpPFs/OpClients were copied by the pending-ops insert; release the
+	 * parsed copies (mosquitto_FREE no-ops on the NULLs of a non-operation publish). */
+	mosquitto_FREE(op_topic_filters);
+	mosquitto_FREE(op_purpose_filters);
+	mosquitto_FREE(op_client_filters);
+	mosquitto_FREE(op_status);
+	mosquitto_FREE(op_reason);
+	mosquitto_FREE(op_client_id);
+	/* Allocated by mosquitto_property_read_binary (or the zero-length marker above);
+	 * the response builders copy what they need, so it is safe to release here. */
+	mosquitto_FREE(correlation_data);
+
+	/* Hold a metrics-window ref so the post-fanout check below can read stored
+	 * even if sub__messages_queue's internal dec would otherwise free it. */
+	struct mosquitto__base_msg *metrics_msg = stored;
+	bool metrics_track = (metrics_msg && metrics_msg->data.has_purpose_filter);
+	if(metrics_track){
+		db__msg_store_ref_inc(metrics_msg);
+	}
+
+	switch(stored->data.qos){
+		case 0:
+			rc2 = sub__messages_queue(context->id, stored->data.topic, stored->data.qos, stored->data.retain, &stored);
+			if(rc2 > 0){
+				rc = rc2;
+			}
+			break;
+		case 1:
+			util__decrement_receive_quota(context);
+			rc2 = sub__messages_queue(context->id, stored->data.topic, stored->data.qos, stored->data.retain, &stored);
+			/* stored may now be free, so don't refer to it */
+			if(rc2 == MOSQ_ERR_SUCCESS || context->protocol != mosq_p_mqtt5){
+				rc2 = send__puback(context, mid, 0, NULL);
+				if(rc2){
+					rc = rc2;
+				}
+			}else if(rc2 == MOSQ_ERR_NO_SUBSCRIBERS){
+				rc2 = send__puback(context, mid, MQTT_RC_NO_MATCHING_SUBSCRIBERS, NULL);
+				if(rc2){
+					rc = rc2;
+				}
+			}else{
+				rc = rc2;
+			}
+			break;
+		case 2:
+			{
+				int res;
+				if(dup == 0){
+					res = db__message_insert_incoming(context, 0, stored, true);
+				}else{
+					res = 0;
+				}
+
+				/* db__message_insert() returns 2 to indicate dropped message
+				 * due to queue. This isn't an error so don't disconnect them. */
+				/* FIXME - this is no longer necessary due to failing early above */
+				if(!res){
+					if(dup == 0 || dup == 1){
+						rc2 = send__pubrec(context, stored->data.source_mid, 0, NULL);
+						if(rc2){
+							rc = rc2;
+						}
+					}else{
+						log__printf(NULL, MOSQ_LOG_INFO, "Protocol error from %s: PUBLISH with dup = %d.", context->id, dup);
+						return MOSQ_ERR_PROTOCOL;
+					}
+				}else{
+					rc = res;
+				}
+				break;
+			}
+	}
+
+	if(metrics_track){
+		metrics_msg->dap_fanout_complete = true;
+		if(!metrics_msg->dap_metrics_emitted
+				&& metrics_msg->dap_subs_matched == metrics_msg->dap_subs_resolved){
+			dap_metrics_log_message(metrics_msg);
+			metrics_msg->dap_metrics_emitted = true;
+		}
+		db__msg_store_ref_dec(&metrics_msg);
+	}
+
+	db__message_write_queued_in(context);
+	return rc;
+}
 
 
 /* Handle a subscriber's status notification for an operation (published to $OSYS with
@@ -102,7 +477,6 @@ int handle__publish(struct mosquitto *context)
 	mosquitto_property *properties = NULL;
 	uint32_t message_expiry_interval = MSG_EXPIRY_INFINITE;
 	int topic_alias = -1;
-	uint8_t reason_code = 0;
 	uint16_t mid = 0;
 
 	// For operations
@@ -133,6 +507,7 @@ int handle__publish(struct mosquitto *context)
 	bool found_op_id_num = false;
 
 	if(context->state != mosq_cs_active){
+		log__printf(NULL, MOSQ_LOG_INFO, "Protocol error from %s: PUBLISH before session is active.", context->id);
 		return MOSQ_ERR_PROTOCOL;
 	}
 
@@ -198,6 +573,7 @@ int handle__publish(struct mosquitto *context)
 		}
 		if(mid == 0){
 			db__msg_store_free(base_msg);
+			log__printf(NULL, MOSQ_LOG_INFO, "Protocol error from %s: PUBLISH packet with mid = 0.", context->id);
 			return MOSQ_ERR_PROTOCOL;
 		}
 		/* It is important to have a separate copy of mid, because msg may be
@@ -213,6 +589,14 @@ int handle__publish(struct mosquitto *context)
 			return rc;
 		}
 
+		/* Process base mosquitto property handling */
+		rc = property__process_publish(base_msg, &properties, &topic_alias, &message_expiry_interval, context->bridge);
+		if(rc){
+			mosquitto_property_free_all(&properties);
+			db__msg_store_free(base_msg);
+			return MOSQ_ERR_PROTOCOL;
+		}
+
 		/* MQTT v5 allows a zero-length PUBLISH topic when a Topic Alias is
 			* supplied; the real topic is resolved from the alias. Upstream does that
 			* resolution further down (after this block), but the DAP consent,
@@ -221,31 +605,43 @@ int handle__publish(struct mosquitto *context)
 			* strcmp()/strncmp() dereference NULL and crash the broker (the
 			* handle_publish.c:308 SEGV). Resolve the alias now, or reject the publish
 			* if the empty topic carries no usable alias, before any topic dereference. */
-		if(base_msg->data.topic == NULL)
-		{
-			uint16_t resolved_alias = 0;
-			const mosquitto_property *alias_prop = mosquitto_property_read_int16(
-					properties, MQTT_PROP_TOPIC_ALIAS, &resolved_alias, false);
-			if(alias_prop == NULL || resolved_alias == 0
-					|| (context->listener && resolved_alias > context->listener->max_topic_alias))
-			{
-				log__printf(NULL, MOSQ_LOG_INFO,
-					"Empty PUBLISH topic with no valid topic alias from %s, rejecting.",
-					context->id);
-				mosquitto_property_free_all(&properties);
+	}
+
+	if(topic_alias == 0 || (context->listener && topic_alias > context->listener->max_topic_alias)){
+		db__msg_store_free(base_msg);
+		return MOSQ_ERR_TOPIC_ALIAS_INVALID;
+	}else if(topic_alias > 0){
+		if(base_msg->data.topic){
+			rc = alias__add_r2l(context, base_msg->data.topic, (uint16_t)topic_alias);
+			if(rc){
 				db__msg_store_free(base_msg);
-				return MOSQ_ERR_TOPIC_ALIAS_INVALID;
+				return rc;
 			}
-			if(alias__find_by_alias(context, ALIAS_DIR_R2L, resolved_alias, &base_msg->data.topic))
-			{
-				log__printf(NULL, MOSQ_LOG_INFO,
-					"Unknown topic alias %u in PUBLISH from %s, rejecting.",
-					resolved_alias, context->id);
-				mosquitto_property_free_all(&properties);
+		}else{
+			rc = alias__find_by_alias(context, ALIAS_DIR_R2L, (uint16_t)topic_alias, &base_msg->data.topic);
+			if(rc){
 				db__msg_store_free(base_msg);
+				log__printf(NULL, MOSQ_LOG_INFO, "Protocol error from %s: PUBLISH invalid topic alias (%d).",
+						context->id, topic_alias);
 				return MOSQ_ERR_PROTOCOL;
 			}
 		}
+	}
+
+	if(context->protocol == mosq_p_mqtt5)
+	{
+		if(base_msg->data.topic == NULL)
+		{
+			log__printf(NULL, MOSQ_LOG_INFO,
+					"Empty PUBLISH topic with no valid topic alias from %s, rejecting.",
+					context->id);
+			mosquitto_property_free_all(&properties);
+			db__msg_store_free(base_msg);
+			return MOSQ_ERR_TOPIC_ALIAS_INVALID;
+		}
+		
+
+		/* Now process DAP-specific handling */
 
 		/* Immediately check for consent and disallow if not given */
 		const mosquitto_property *curr_prop_ptr = properties;
@@ -444,13 +840,6 @@ int handle__publish(struct mosquitto *context)
 			}
 		}
 
-		rc = property__process_publish(base_msg, &properties, &topic_alias, &message_expiry_interval);
-		if(rc){
-			mosquitto_property_free_all(&properties);
-			db__msg_store_free(base_msg);
-			return MOSQ_ERR_PROTOCOL;
-		}
-
 		/* Expose the receipt timestamp to subscribers as a user property, so they
 		 * share the broker's reference time for ordering. */
 		char ts_buf[32];
@@ -460,25 +849,6 @@ int handle__publish(struct mosquitto *context)
 		}
 	}
 	mosquitto_property_free_all(&properties);
-
-	if(topic_alias == 0 || (context->listener && topic_alias > context->listener->max_topic_alias)){
-		db__msg_store_free(base_msg);
-		return MOSQ_ERR_TOPIC_ALIAS_INVALID;
-	}else if(topic_alias > 0){
-		if(base_msg->data.topic){
-			rc = alias__add_r2l(context, base_msg->data.topic, (uint16_t)topic_alias);
-			if(rc){
-				db__msg_store_free(base_msg);
-				return rc;
-			}
-		}else{
-			rc = alias__find_by_alias(context, ALIAS_DIR_R2L, (uint16_t)topic_alias, &base_msg->data.topic);
-			if(rc){
-				db__msg_store_free(base_msg);
-				return MOSQ_ERR_PROTOCOL;
-			}
-		}
-	}
 
 #ifdef WITH_BRIDGE
 	rc = bridge__remap_topic_in(context, &base_msg->data.topic);
@@ -513,8 +883,7 @@ int handle__publish(struct mosquitto *context)
 	if(base_msg->data.payloadlen){
 		if(db.config->message_size_limit && base_msg->data.payloadlen > db.config->message_size_limit){
 			log__printf(NULL, MOSQ_LOG_DEBUG, "Dropped too large PUBLISH from %s (d%d, q%d, r%d, m%d, '%s', ... (%ld bytes))", context->id, dup, base_msg->data.qos, base_msg->data.retain, base_msg->data.source_mid, base_msg->data.topic, (long)base_msg->data.payloadlen);
-			reason_code = MQTT_RC_PACKET_TOO_LARGE;
-			goto process_bad_message;
+			return process_bad_message(context, base_msg, MQTT_RC_PACKET_TOO_LARGE);
 		}
 		base_msg->data.payload = mosquitto_malloc(base_msg->data.payloadlen+1);
 		if(base_msg->data.payload == NULL){
@@ -531,14 +900,16 @@ int handle__publish(struct mosquitto *context)
 	}
 
 	/* Check for topic access */
-	rc = mosquitto_acl_check(context, base_msg->data.topic, base_msg->data.payloadlen, base_msg->data.payload, base_msg->data.qos, base_msg->data.retain, MOSQ_ACL_WRITE);
+	rc = mosquitto_acl_check(context,
+			base_msg->data.topic, base_msg->data.payloadlen, base_msg->data.payload,
+			base_msg->data.qos, base_msg->data.retain, base_msg->data.properties,
+			MOSQ_ACL_WRITE);
 	if(rc == MOSQ_ERR_ACL_DENIED){
 		log__printf(NULL, MOSQ_LOG_DEBUG,
 				"Denied PUBLISH from %s (d%d, q%d, r%d, m%d, '%s', ... (%ld bytes))",
 				context->id, dup, base_msg->data.qos, base_msg->data.retain, base_msg->data.source_mid, base_msg->data.topic,
 				(long)base_msg->data.payloadlen);
-		reason_code = MQTT_RC_NOT_AUTHORIZED;
-		goto process_bad_message;
+		return process_bad_message(context, base_msg, MQTT_RC_NOT_AUTHORIZED);
 	}else if(rc != MOSQ_ERR_SUCCESS){
 		db__msg_store_free(base_msg);
 		return rc;
@@ -552,350 +923,9 @@ int handle__publish(struct mosquitto *context)
 		db__msg_store_free(base_msg);
 		return rc;
 #else
-		reason_code = MQTT_RC_IMPLEMENTATION_SPECIFIC;
-		goto process_bad_message;
+		return process_bad_message(context, base_msg, MQTT_RC_IMPLEMENTATION_SPECIFIC);
 #endif
 	}
 
-	{
-		rc = plugin__handle_message_in(context, &base_msg->data);
-		if(rc == MOSQ_ERR_ACL_DENIED){
-			log__printf(NULL, MOSQ_LOG_DEBUG,
-					"Denied PUBLISH from %s (d%d, q%d, r%d, m%d, '%s', ... (%ld bytes))",
-					context->id, dup, base_msg->data.qos, base_msg->data.retain, base_msg->data.source_mid, base_msg->data.topic,
-					(long)base_msg->data.payloadlen);
-
-			reason_code = MQTT_RC_NOT_AUTHORIZED;
-			goto process_bad_message;
-		}else if(rc == MOSQ_ERR_QUOTA_EXCEEDED){
-			log__printf(NULL, MOSQ_LOG_DEBUG,
-					"Rejected PUBLISH from %s, quota exceeded.", context->id);
-
-			reason_code = MQTT_RC_QUOTA_EXCEEDED;
-			goto process_bad_message;
-		}else if(rc != MOSQ_ERR_SUCCESS){
-			db__msg_store_free(base_msg);
-			return rc;
-		}
-	}
-
-	if(base_msg->data.qos > 0){
-		db__message_store_find(context, base_msg->data.source_mid, &cmsg_stored);
-	}
-
-	if(cmsg_stored && cmsg_stored->base_msg && base_msg->data.source_mid != 0 &&
-			(cmsg_stored->base_msg->data.qos != base_msg->data.qos
-			 || cmsg_stored->base_msg->data.payloadlen != base_msg->data.payloadlen
-			 || strcmp(cmsg_stored->base_msg->data.topic, base_msg->data.topic)
-			 || memcmp(cmsg_stored->base_msg->data.payload, base_msg->data.payload, base_msg->data.payloadlen) )){
-
-		log__printf(NULL, MOSQ_LOG_WARNING, "Reused message ID %u from %s detected. Clearing from storage.", base_msg->data.source_mid, context->id);
-		db__message_remove_incoming(context, base_msg->data.source_mid);
-		cmsg_stored = NULL;
-	}
-
-	if(!cmsg_stored){
-		if(base_msg->data.qos > 0 && context->msgs_in.inflight_quota == 0){
-			/* Client isn't allowed any more incoming messages, so fail early */
-			db__msg_store_free(base_msg);
-			return MOSQ_ERR_RECEIVE_MAXIMUM_EXCEEDED;
-		}
-
-		if(base_msg->data.qos == 0
-				|| db__ready_for_flight(context, mosq_md_in, base_msg->data.qos)
-				){
-
-			dup = 0;
-			rc = db__message_store(context, base_msg, &message_expiry_interval, mosq_mo_client);
-			if(rc) return rc;
-		}else{
-			/* Client isn't allowed any more incoming messages, so fail early */
-			reason_code = MQTT_RC_QUOTA_EXCEEDED;
-			goto process_bad_message;
-		}
-		stored = base_msg;
-		base_msg = NULL;
-		dup = 0;
-	}else{
-		db__msg_store_free(base_msg);
-		base_msg = NULL;
-		stored = cmsg_stored->base_msg;
-		cmsg_stored->data.dup++;
-		dup = cmsg_stored->data.dup;
-	}
-
-	if(stored->data.retain)
-	{
-		dr__record_retained_publisher(context->id, stored->data.topic);
-	}
-
-	/* Read all potential operational properties for later. A request carries
-		* DAP-OpType (found_op); a subscriber status notification carries DAP-Status. */
-	/* The immediate-forward path (HISTORY and other non-pending rights) scopes its
-	 * recipient lookup by op_info, but the parser fills the operation's topic-filter
-	 * list into op_topic_filters (from DAP-OpTFs) and left op_info unset, so that path
-	 * never matched. Alias op_info to the parsed topic filters. Borrowed pointer:
-	 * op_topic_filters remains the owner and is freed once in the cleanup below;
-	 * op_info is never freed, so there is no double free. */
-	op_info = op_topic_filters;
-
-	if(db.config->metadata_operation_handling && (found_op || op_status))
-	{
-		if(!strncmp(stored->data.topic, MOSQ_DAP_TOPIC_OSYS, 5))
-		{
-			if(op_status)
-			{
-				/* Inbound status notification: relay it to the requester and, on a
-					* terminal status, advance the deadline tracker. */
-				handle_dap_status_notification(context, found_op ? op_id : NULL,
-						op_id_num, found_op_id_num, op_status, op_reason,
-						op_client_id, stored, correlation_data, correlation_data_len);
-			}
-			/* C1 Operations */
-			else if(!strcmp(op_id, MOSQ_DAP_OP_AUDIT))
-			{
-				subscription_list *subs = find_subscriptions_for_publisher(context->id);
-				while(subs){
-					const char *info = ri__lookup_info(subs->subscriber_id);
-					if(info){
-						broker_send_response_success(context->id, op_id, correlation_data, correlation_data_len, info, response_topic);
-						ri__mark_sent_to_pub(context->id, subs->subscriber_id);
-					}
-					subs = subs->next;
-				}
-			}
-
-			/* REGISTER-INFO: store the requester's info for later auto-fulfilment.
-				* "Informed-Reg" is the original name and is still accepted. */
-			else if(!strcmp(op_id, MOSQ_DAP_OP_REGISTER_INFO))
-			{
-				ri__register_info(context->id, stored->data.payload);
-			}
-
-			/* C2/C3 Operations */
-			else if (!strcmp(op_id, MOSQ_DAP_OP_HISTORY)
-			|| !strcmp(op_id, MOSQ_DAP_OP_DELETE) || !strcmp(op_id, MOSQ_DAP_OP_RESTRICT))
-			{
-				/* DELETE/RESTRICT become pending operations in the broker-wide map;
-					* dap_op_request_insert succeeds for exactly those two and assigns the
-					* numeric op id. Every other right (Access/Portability/Rectification/
-					* Object/AutoDecision) falls through to the unchanged immediate path. */
-				uint64_t pending_op_id = 0;
-				bool is_pending_op = (dap_op_request_insert(db.dap_pending_ops, context->id, op_id,
-							op_topic_filters, op_purpose_filters, op_client_filters,
-							stored->dap_recv_time, &pending_op_id) == 0);
-
-				if(is_pending_op)
-				{
-					/* Deadline workflow. Relevant subscribers are those that received
-						* data from this publisher matching the operation's topic/purpose/
-						* client filters within the DAP-OpBefore/OpAfter receipt-time
-						* bounds (0 = unbounded on that side). */
-					log__printf(NULL, MOSQ_LOG_DEBUG,
-							"DAP pending operation %llu (%s) registered for %s; bounds after=%lld before=%lld",
-							(unsigned long long)pending_op_id, op_id, context->id,
-							(long long)op_after, (long long)op_before);
-
-					struct dr_sublist *relevant = dr__find_relevant_subscribers(context->id,
-							op_topic_filters, op_purpose_filters, op_client_filters,
-							op_before, op_after);
-
-					/* Assign a deadline relative to the receipt timestamp, forward to the
-						* relevant subs on their ORS, register the op with the deadline
-						* tracker, and echo a Pending ack (op id + deadline) to the requester.
-						* The final Success/Failure is settled by the deadline sweep (loop.c)
-						* and the status path, not synchronously here. */
-					time_t deadline = stored->dap_recv_time + MOSQ_DAP_DEFAULT_DEADLINE_SECS;
-					broker_dispatch_pending_operation(context->id, op_id, pending_op_id,
-							relevant, &stored->data, response_topic, op_info,
-							correlation_data, correlation_data_len, deadline);
-					dr__free_sublist(relevant);
-
-					/* DELETE additionally drops the publisher's stored will/retained data. */
-					if(!strcmp(op_id, MOSQ_DAP_OP_DELETE))
-					{
-						handle_remove_stored_messages(context->id);
-					}
-				}
-				else
-				{
-					/* Non-pending rights: immediate forward + Success/Failure. */
-					subscriber_list *sub_list = find_subscribers_with_data(context->id, op_info);
-					subscriber_list *offline = forward_request_to_connected(sub_list, &stored->data, response_topic, op_id, op_info, correlation_data, correlation_data_len, 0);
-					if(offline){
-						broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Subscriber not connected", offline, response_topic);
-					}
-					else
-					{
-						broker_send_response_success(context->id, op_id, correlation_data, correlation_data_len, NULL, response_topic);
-					}
-				}
-			}
-
-			/* AUDIT: report which subscribers received the requester's matching
-				* data. The broker fulfils this directly without consulting anyone;
-				* the success payload is the comma-separated subscriber ids. No
-				* relevant subscribers is a failure. */
-			else if(!strcmp(op_id, MOSQ_DAP_OP_AUDIT))
-			{
-				struct dr_sublist *relevant = dr__find_relevant_subscribers(context->id,
-						op_topic_filters, op_purpose_filters, op_client_filters,
-						op_before, op_after);
-				if(!relevant)
-				{
-					broker_send_response_failure(context->id, op_id, correlation_data,
-							correlation_data_len, "No relevant subscribers", NULL, response_topic);
-				}
-				else
-				{
-					size_t len = 0;
-					for(struct dr_sublist *s = relevant; s; s = s->next){
-						len += strlen(s->sub_id) + 1; /* id plus a separator/terminator */
-					}
-					char *payload = mosquitto_calloc(1, len + 1);
-					if(payload)
-					{
-						for(struct dr_sublist *s = relevant; s; s = s->next){
-							strcat(payload, s->sub_id);
-							if(s->next) strcat(payload, ",");
-						}
-						broker_send_response_success(context->id, op_id, correlation_data,
-								correlation_data_len, payload, response_topic);
-						mosquitto_FREE(payload);
-					}
-					dr__free_sublist(relevant);
-				}
-			}
-
-			/* HISTORY and UPDATE are subscriber-involving like DELETE/RESTRICT but
-				* do not apply to in-flight messages, so they get no pending-ops entry.
-				* Allocate an op id, forward to the relevant subscribers and track the
-				* deadline. UPDATE's replacement payload rides along in the forwarded
-				* request (stored->data.payload). */
-			else if(!strcmp(op_id, MOSQ_DAP_OP_HISTORY) || !strcmp(op_id, MOSQ_DAP_OP_UPDATE))
-			{
-				uint64_t hu_op_id = dap_pending_ops_allocate_op_id(db.dap_pending_ops);
-				struct dr_sublist *relevant = dr__find_relevant_subscribers(context->id,
-						op_topic_filters, op_purpose_filters, op_client_filters,
-						op_before, op_after);
-				time_t deadline = stored->dap_recv_time + MOSQ_DAP_DEFAULT_DEADLINE_SECS;
-				broker_dispatch_pending_operation(context->id, op_id, hu_op_id,
-						relevant, &stored->data, response_topic, op_info,
-						correlation_data, correlation_data_len, deadline);
-				dr__free_sublist(relevant);
-			}
-
-			/* Generic operator-defined operation ("O:" prefix), also not implemented. */
-			else if(!strncmp(op_id, MOSQ_DAP_OP_PREFIX, strlen(MOSQ_DAP_OP_PREFIX)))
-			{
-				log__printf(NULL, MOSQ_LOG_INFO,
-						"DAP generic operation %s from %s not yet implemented", op_id, context->id);
-			}
-
-			else
-			{
-				/* Unrecognized right. */
-				broker_send_response_failure(context->id, op_id, correlation_data, correlation_data_len, "Unknown right", NULL, response_topic);
-			}
-		}
-	}
-
-	/* DAP-OpTFs/OpPFs/OpClients were copied by the pending-ops insert; release the
-	 * parsed copies (mosquitto_FREE no-ops on the NULLs of a non-operation publish). */
-	mosquitto_FREE(op_topic_filters);
-	mosquitto_FREE(op_purpose_filters);
-	mosquitto_FREE(op_client_filters);
-	mosquitto_FREE(op_status);
-	mosquitto_FREE(op_reason);
-	mosquitto_FREE(op_client_id);
-	/* Allocated by mosquitto_property_read_binary (or the zero-length marker above);
-	 * the response builders copy what they need, so it is safe to release here. */
-	mosquitto_FREE(correlation_data);
-
-	/* Hold a metrics-window ref so the post-fanout check below can read stored
-	 * even if sub__messages_queue's internal dec would otherwise free it. */
-	struct mosquitto__base_msg *metrics_msg = stored;
-	bool metrics_track = (metrics_msg && metrics_msg->data.has_purpose_filter);
-	if(metrics_track){
-		db__msg_store_ref_inc(metrics_msg);
-	}
-
-	switch(stored->data.qos){
-		case 0:
-			rc2 = sub__messages_queue(context->id, stored->data.topic, stored->data.qos, stored->data.retain, &stored);
-			if(rc2 > 0) rc = 1;
-			break;
-		case 1:
-			util__decrement_receive_quota(context);
-			rc2 = sub__messages_queue(context->id, stored->data.topic, stored->data.qos, stored->data.retain, &stored);
-			/* stored may now be free, so don't refer to it */
-			if(rc2 == MOSQ_ERR_SUCCESS || context->protocol != mosq_p_mqtt5){
-				if(send__puback(context, mid, 0, NULL)) rc = 1;
-			}else if(rc2 == MOSQ_ERR_NO_SUBSCRIBERS){
-				if(send__puback(context, mid, MQTT_RC_NO_MATCHING_SUBSCRIBERS, NULL)) rc = 1;
-			}else{
-				rc = rc2;
-			}
-			break;
-		case 2:
-			if(dup == 0){
-				res = db__message_insert_incoming(context, 0, stored, true);
-			}else{
-				res = 0;
-			}
-			/* QoS 2 fan-out occurs later via PUBREL; the post-fanout emit below
-			 * does not apply to this branch. */
-			if(metrics_track){
-				db__msg_store_ref_dec(&metrics_msg);
-				metrics_track = false;
-			}
-
-			/* db__message_insert() returns 2 to indicate dropped message
-			 * due to queue. This isn't an error so don't disconnect them. */
-			/* FIXME - this is no longer necessary due to failing early above */
-			if(!res){
-				if(dup == 0 || dup == 1){
-					rc2 = send__pubrec(context, stored->data.source_mid, 0, NULL);
-					if(rc2) rc = rc2;
-				}else{
-					return MOSQ_ERR_PROTOCOL;
-				}
-			}else if(res == 1){
-				rc = 1;
-			}
-			break;
-	}
-
-	if(metrics_track){
-		metrics_msg->dap_fanout_complete = true;
-		if(!metrics_msg->dap_metrics_emitted
-				&& metrics_msg->dap_subs_matched == metrics_msg->dap_subs_resolved){
-			dap_metrics_log_message(metrics_msg);
-			metrics_msg->dap_metrics_emitted = true;
-		}
-		db__msg_store_ref_dec(&metrics_msg);
-	}
-
-	db__message_write_queued_in(context);
-	return rc;
-process_bad_message:
-	rc = 1;
-	if(base_msg){
-		switch(base_msg->data.qos){
-			case 0:
-				rc = MOSQ_ERR_SUCCESS;
-				break;
-			case 1:
-				rc = send__puback(context, base_msg->data.source_mid, reason_code, NULL);
-				break;
-			case 2:
-				rc = send__pubrec(context, base_msg->data.source_mid, reason_code, NULL);
-				break;
-		}
-		db__msg_store_free(base_msg);
-	}
-	if(context->out_packet_count >= db.config->max_queued_messages){
-		rc = MQTT_RC_QUOTA_EXCEEDED;
-	}
-	return rc;
+	return handle__accepted_publish(context, base_msg, mid, dup, &message_expiry_interval);
 }

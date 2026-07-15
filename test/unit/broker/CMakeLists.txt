@@ -59,12 +59,12 @@ add_library(persistence-write-obj
         ../../../src/persist_write_v5.c
         ../../../src/persist_write.c
         ../../../src/retain.c
-        ../../../src/rights_broker.c
+        ../../../src/dap/rights_broker.c
         ../../../src/subs.c
-        ../../../lib/ri_registry.c
-        ../../../lib/dr_registry.c
-        ../../../lib/rights_registry.c 
-        ../../../lib/purpose_filters.c   
+        ../../../lib/dap/ri_registry.c
+        ../../../lib/dap/dr_registry.c
+        ../../../lib/dap/rights_registry.c 
+        ../../../lib/dap/purpose_filters.c   
         ../../../src/topic_tok.c
 )
 target_compile_definitions(persistence-write-obj PRIVATE WITH_PERSISTENCE WITH_BROKER)
@@ -90,13 +90,13 @@ add_library(subs-obj
         ../../../lib/property_mosq.c
         ../../../lib/packet_datatypes.c
         ../../../src/database.c
-        ../../../src/rights_broker.c
-        ../../../src/retain.c
+        ../../../src/dap/rights_broker.c
+        ../../../src/dap/retain.c
         ../../../src/subs.c
-        ../../../lib/ri_registry.c
-        ../../../lib/dr_registry.c
-        ../../../lib/rights_registry.c
-        ../../../lib/purpose_filters.c   
+        ../../../lib/dap/ri_registry.c
+        ../../../lib/dap/dr_registry.c
+        ../../../lib/dap/rights_registry.c
+        ../../../lib/dap/purpose_filters.c   
         ../../../src/topic_tok.c
 )
 target_compile_definitions(subs-obj PRIVATE WITH_BROKER)

@@ -10,6 +10,16 @@ LOCAL_CPPFLAGS+=-DWITH_BROKER -I${R}/src -I${R}/test -I${R}/lib -DTEST_SOURCE_DI
 LOCAL_LDFLAGS+=-coverage
 LOCAL_LDADD+=-lcunit ${LIBMOSQ_COMMON}
 
+ALL_TESTS:=keepalive_test subs_test queued_priority_test
+
+ifeq ($(WITH_BRIDGE),yes)
+	ALL_TESTS+=bridge_topic_test
+endif
+
+ifeq ($(WITH_PERSISTENCE),yes)
+	ALL_TESTS+=persist_read_test persist_write_test
+endif
+
 ifeq ($(WITH_TLS),yes)
 	LOCAL_LDADD+=-lssl -lcrypto
 endif
@@ -171,9 +181,6 @@ ${QUEUED_PRIORITY_TEST_OBJS} : %.o: %.c
 
 queued-priority : queued_priority_test
 	${SANITIZER_COMMAND} ./queued_priority_test
-
-ALL_TESTS:=bridge_topic_test keepalive_test persist_read_test persist_write_test subs_test
-
 build : ${ALL_TESTS}
 
 test : build
@@ -182,7 +189,7 @@ test : build
 test-compile: build
 
 clean :
-	-rm -rf mosq_test bridge_topic_test keepalive_test persist_read_test persist_write_test subs_test queued_priority_test
+	-rm -rf ${ALL_TESTS}
 	-rm -rf *.o *.gcda *.gcno coverage.info *.vglog out/
 
 coverage :
