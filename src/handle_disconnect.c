@@ -82,6 +82,7 @@ int handle__disconnect(struct mosquitto *context)
 		will__clear(context);
 		mosquitto__set_state(context, mosq_cs_disconnecting);
 	}
+	db__remove_context_by_id(context);
 	do_disconnect(context, MOSQ_ERR_SUCCESS);
 	return MOSQ_ERR_SUCCESS;
 }

@@ -25,7 +25,7 @@
 
 #include <utlist.h>
 
-#include "dap_topics.h"
+#include "dap/dap_topics.h"
 
 /*
  * Insert client_msg into msg_data->queued. A data message is appended at the tail

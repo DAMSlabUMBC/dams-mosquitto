@@ -121,7 +121,7 @@ OBJS=	mosquitto.o \
 		websockets.o \
 		will_delay.o \
 		xtreport.o \
-		rights_broker.o
+		dap/rights_broker.o
 
 OBJS_EXTERNAL= \
 		acl_check.o \
@@ -265,52 +265,52 @@ util_mosq.o : ${R}/lib/util_mosq.c ${R}/lib/util_mosq.h
 will_mosq.o : ${R}/lib/will_mosq.c ${R}/lib/will_mosq.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-purpose_filters.o : ${R}/lib/purpose_filters.c ${R}/lib/purpose_filters.h
+purpose_filters.o : ${R}/lib/dap/purpose_filters.c ${R}/lib/dap/purpose_filters.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-mp_registry.o : ${R}/lib/mp_registry.c ${R}/lib/mp_registry.h
+mp_registry.o : ${R}/lib/dap/mp_registry.c ${R}/lib/dap/mp_registry.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-ri_registry.o : ${R}/lib/ri_registry.c ${R}/lib/ri_registry.h
+ri_registry.o : ${R}/lib/dap/ri_registry.c ${R}/lib/dap/ri_registry.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-dr_registry.o : ${R}/lib/dr_registry.c ${R}/lib/dr_registry.h
+dr_registry.o : ${R}/lib/dap/dr_registry.c ${R}/lib/dap/dr_registry.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-dap_subscription_queues.o : ${R}/lib/dap_subscription_queues.c ${R}/lib/dap_subscription_queues.h
+dap_subscription_queues.o : ${R}/lib/dap/dap_subscription_queues.c ${R}/lib/dap/dap_subscription_queues.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-dap_pending_ops.o : ${R}/lib/dap_pending_ops.c ${R}/lib/dap_pending_ops.h
+dap_pending_ops.o : ${R}/lib/dap/dap_pending_ops.c ${R}/lib/dap/dap_pending_ops.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-dap_op_request.o : ${R}/lib/dap_op_request.c ${R}/lib/dap_op_request.h
+dap_op_request.o : ${R}/lib/dap/dap_op_request.c ${R}/lib/dap/dap_op_request.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-dap_metrics.o : ${R}/lib/dap_metrics.c ${R}/lib/dap_metrics.h
+dap_metrics.o : ${R}/lib/dap/dap_metrics.c ${R}/lib/dap/dap_metrics.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-dap_timestamp.o : ${R}/lib/dap_timestamp.c ${R}/lib/dap_timestamp.h
+dap_timestamp.o : ${R}/lib/dap/dap_timestamp.c ${R}/lib/dap/dap_timestamp.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-dap_topics.o : ${R}/lib/dap_topics.c ${R}/lib/dap_topics.h
+dap_topics.o : ${R}/lib/dap/dap_topics.c ${R}/lib/dap/dap_topics.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-dap_send_verify.o : ${R}/lib/dap_send_verify.c ${R}/lib/dap_send_verify.h
+dap_send_verify.o : ${R}/lib/dap/dap_send_verify.c ${R}/lib/dap/dap_send_verify.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-dap_deadline_tracker.o : ${R}/lib/dap_deadline_tracker.c ${R}/lib/dap_deadline_tracker.h
+dap_deadline_tracker.o : ${R}/lib/dap/dap_deadline_tracker.c ${R}/lib/dap/dap_deadline_tracker.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-dap_holding_list.o : ${R}/lib/dap_holding_list.c ${R}/lib/dap_holding_list.h
+dap_holding_list.o : ${R}/lib/dap/dap_holding_list.c ${R}/lib/dap/dap_holding_list.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-dap_op_requester.o : ${R}/lib/dap_op_requester.c ${R}/lib/dap_op_requester.h
+dap_op_requester.o : ${R}/lib/dap/dap_op_requester.c ${R}/lib/dap/dap_op_requester.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-dap_stamp.o : ${R}/lib/dap_stamp.c ${R}/lib/dap_stamp.h
+dap_stamp.o : ${R}/lib/dap/dap_stamp.c ${R}/lib/dap/dap_stamp.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
-rights_registry.o : ${R}/lib/rights_registry.c ${R}/lib/rights_registry.h
+rights_registry.o : ${R}/lib/dap/rights_registry.c ${R}/lib/dap/rights_registry.h
 	${CROSS_COMPILE}${CC} $(LOCAL_CPPFLAGS) $(LOCAL_CFLAGS) -c $< -o $@
 
 install : all

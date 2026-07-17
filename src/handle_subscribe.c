@@ -25,14 +25,14 @@ Contributors:
 #include "mosquitto/mqtt_protocol.h"
 #include "packet_mosq.h"
 #include "property_common.h"
-#include "mp_registry.h" 
 #include "property_mosq.h"
-#include "ri_registry.h" 
-#include "dr_registry.h" 
-#include "rights_registry.h"
-#include "rights_broker.h"
-#include "purpose_filters.h"
-#include "dap_topics.h"
+#include "dap/mp_registry.h" 
+#include "dap/ri_registry.h" 
+#include "dap/dr_registry.h" 
+#include "dap/rights_registry.h"
+#include "dap/rights_broker.h"
+#include "dap/purpose_filters.h"
+#include "dap/dap_topics.h"
 
 int handle__subscribe(struct mosquitto *context)
 {

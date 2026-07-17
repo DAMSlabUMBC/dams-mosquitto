@@ -369,6 +369,7 @@ struct mosquitto__config {
 	int sys_interval;
 	bool upgrade_outgoing_qos;
 	char *user;
+	bool metadata_operation_handling;
 #if defined(WITH_WEBSOCKETS) && WITH_WEBSOCKETS == WS_IS_LWS
 	int websockets_log_level;
 #endif
@@ -736,6 +737,9 @@ int handle__auth(struct mosquitto *context);
  * Database handling
  * ============================================================ */
 int db__open(struct mosquitto__config *config);
+void db__add_context_by_id(struct mosquitto *ctx);
+void db__remove_context_by_id(struct mosquitto *ctx);
+struct mosquitto *db__find_context_by_id(const char *client_id);
 int db__close(void);
 #ifdef WITH_PERSISTENCE
 int persist__backup(bool shutdown);

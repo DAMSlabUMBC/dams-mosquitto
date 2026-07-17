@@ -210,12 +210,7 @@ static bool dr__result_has(struct dr_sublist *list, const char *sub_id)
     return false;
 }
 
-struct dr_sublist *dr__find_relevant_subscribers(const char *pub_id,
-                                                 const char *op_topic_filters,
-                                                 const char *op_purpose_filters,
-                                                 const char *op_client_filters,
-                                                 time_t before,
-                                                 time_t after)
+struct dr_sublist *dr__find_relevant_subscribers(const char *pub_id, struct dap__op_property *dap_op_properties)
 {
     struct dr_sublist *result = NULL;
 
@@ -226,17 +221,17 @@ struct dr_sublist *dr__find_relevant_subscribers(const char *pub_id,
         if(strcmp(e->pub_id, pub_id)) continue;
 
         /* The receipt topic must match a topic filter. */
-        if(!dr__field_matches(op_topic_filters, e->topic)) continue;
+        if(!dr__field_matches(dap_op_properties->op_topic_filters, e->topic)) continue;
 
         for(struct dr_sublist *s = e->sub_list; s; s = s->next){
             /* The subscriber id must be in the client filters. */
-            if(!dr__field_matches(op_client_filters, s->sub_id)) continue;
+            if(!dr__field_matches(dap_op_properties->op_client_filters, s->sub_id)) continue;
             /* The SP at receipt must share a purpose with the filters. */
-            if(!dr__purpose_matches(op_purpose_filters, s->sp)) continue;
+            if(!dr__purpose_matches(dap_op_properties->op_purpose_filters, s->sp)) continue;
             /* The receipt time must fall within the DAP-OpAfter/OpBefore bounds;
              * a 0 bound is unbounded on that side. */
-            if(after && s->recv_time < after) continue;
-            if(before && s->recv_time > before) continue;
+            if(dap_op_properties->op_after && s->recv_time < dap_op_properties->op_after) continue;
+            if(dap_op_properties->op_before && s->recv_time > dap_op_properties->op_before) continue;
             /* Receipt itself is implicit: only recorded recipients are walked. */
 
             /* A subscriber relevant via several flows is still returned once. */

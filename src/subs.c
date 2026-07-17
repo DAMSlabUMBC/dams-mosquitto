@@ -53,16 +53,16 @@ Contributors:
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
-#include "mp_registry.h"
+#include "dap/mp_registry.h"
 #include "mosquitto_broker_internal.h"
 #include "mosquitto/mqtt_protocol.h"
 #include "util_mosq.h"
-#include "dr_registry.h"
-#include "ri_registry.h"
-#include "rights_broker.h"
-#include "purpose_filters.h"
-#include "dap_subscription_queues.h"
-#include "dap_stamp.h"
+#include "dap/dr_registry.h"
+#include "dap/ri_registry.h"
+#include "dap/rights_broker.h"
+#include "dap/purpose_filters.h"
+#include "dap/dap_subscription_queues.h"
+#include "dap/dap_stamp.h"
 #include "utlist.h"
 
 static struct mosquitto__subhier *sub__add_hier_entry(struct mosquitto__subhier *parent, struct mosquitto__subhier **sibling, const char *topic, uint16_t len);

@@ -245,6 +245,7 @@ int connect__on_authorised(struct mosquitto *context, void *auth_data_out, uint1
 	 * assuming a possible change of username. */
 	db__check_acl_of_all_messages(context);
 	context__add_to_by_id(context);
+	db__add_context_by_id(context); 
 
 #ifdef WITH_PERSISTENCE
 	if(!context->clean_start){

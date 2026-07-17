@@ -53,7 +53,7 @@ Contributors:
 
 #include "mosquitto_broker_internal.h"
 #include "util_mosq.h"
-#include "dap_metrics.h"
+#include "dap/dap_metrics.h"
 
 struct mosquitto_db db;
 

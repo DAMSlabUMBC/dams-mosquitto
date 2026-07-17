@@ -84,7 +84,7 @@ WITH_SRV:=no
 WITH_WEBSOCKETS:=yes
 
 # Build man page documentation by default.
-WITH_DOCS:=yes
+WITH_DOCS:=no
 
 # Build with client support for SOCK5 proxy.
 WITH_SOCKS:=yes
@@ -140,7 +140,7 @@ WITH_OLD_KEEPALIVE=no
 WITH_SQLITE=yes
 
 # Use gmock for testing
-WITH_GMOCK:=yes
+WITH_GMOCK:=no
 
 # Build broker for fuzzing only - does not work as a normal broker. This is
 # currently only suitable for use with oss-fuzz.
@@ -150,10 +150,10 @@ WITH_FUZZING=no
 WITH_ASAN=no
 
 # Build with editline support to allow the mosquitto_ctrl shell
-WITH_EDITLINE=yes
+WITH_EDITLINE=no
 
 # Build with basic HTTP API support
-WITH_HTTP_API=yes
+WITH_HTTP_API=no
 
 # =============================================================================
 # End of user configuration

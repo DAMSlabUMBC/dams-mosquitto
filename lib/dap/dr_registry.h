@@ -3,6 +3,7 @@
 #define DR_REGISTRY_H
 
 #include <time.h>
+#include "property_common.h"
 
 struct dr_sublist {
     char *sub_id;
@@ -65,11 +66,6 @@ void dr__free_sublist(struct dr_sublist *list);
  * Limitation: topic and purpose elements are compared exactly (or via "*"). MQTT
  * topic wildcards (+/#) and hierarchical purpose subsumption are not yet honoured.
  */
-struct dr_sublist *dr__find_relevant_subscribers(const char *pub_id,
-                                                 const char *op_topic_filters,
-                                                 const char *op_purpose_filters,
-                                                 const char *op_client_filters,
-                                                 time_t before,
-                                                 time_t after);
+struct dr_sublist *dr__find_relevant_subscribers(const char *pub_id, struct dap__op_property *dap_op_properties);
 
 #endif

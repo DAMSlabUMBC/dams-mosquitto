@@ -52,8 +52,8 @@ Contributors:
 #include "send_mosq.h"
 #include "sys_tree.h"
 #include "util_mosq.h"
-#include "rights_broker.h"
-#include "dap_deadline_tracker.h"
+#include "dap/rights_broker.h"
+#include "dap/dap_deadline_tracker.h"
 
 extern int g_run;
 

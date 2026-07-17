@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <time.h>
 
-#include "mosquitto_broker_internal.h"
+#include "../../src/mosquitto_broker_internal.h"
 #include "dap_metrics.h"
 
 static FILE *metrics_file = NULL;

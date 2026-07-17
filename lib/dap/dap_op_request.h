@@ -7,6 +7,7 @@
 
 /* dap_pending_ops.h provides the map type and dap_pending_ops_insert_operation. */
 #include "dap_pending_ops.h"
+#include "property_common.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,10 +30,7 @@ extern "C" {
  */
 int dap_op_request_insert(struct dap_pending_ops *map,
                           const char *pub_id,
-                          const char *operation,
-                          const char *op_topic_filters,
-                          const char *op_purpose_filters,
-                          const char *op_client_filters,
+                          struct dap__op_property *dap_op_properties,
                           time_t timestamp,
                           uint64_t *op_id_out);
 
